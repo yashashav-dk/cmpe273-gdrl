@@ -85,6 +85,7 @@ secrets/
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Spec-kit local cache
 .specify/cache/
