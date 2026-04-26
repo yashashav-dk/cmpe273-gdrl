@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "gdrl-agent"
+version = "0.1.0"
+description = "AI traffic shaping agent for gdrl"
+requires-python = ">=3.11"
+dependencies = [
+    "prometheus-api-client>=0.5",
+    "redis>=5.0",
+    "pandas>=2.1",
+    "scikit-learn>=1.4",
+    "statsmodels>=0.14",
+]
+
+[project.scripts]
+agent = "agent.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
