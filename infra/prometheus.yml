@@ -1,0 +1,50 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ── API Gateways (Nikhil) ───────────────────────────────────────────────────
+  # Each gateway exposes /metrics on its port. Uncomment once gateways are live.
+  - job_name: gateway-us
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          region: us
+
+  - job_name: gateway-eu
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          region: eu
+
+  - job_name: gateway-asia
+    static_configs:
+      - targets: ["host.docker.internal:8083"]
+        labels:
+          region: asia
+
+  # ── Sync services (Yashashav) ───────────────────────────────────────────────
+  # Each sync service exposes /metrics via FastAPI on its admin port.
+  # Ports TBD — update once Yashashav publishes ports.
+  - job_name: sync-us
+    static_configs:
+      - targets: ["host.docker.internal:8091"]
+        labels:
+          region: us
+
+  - job_name: sync-eu
+    static_configs:
+      - targets: ["host.docker.internal:8092"]
+        labels:
+          region: eu
+
+  - job_name: sync-asia
+    static_configs:
+      - targets: ["host.docker.internal:8093"]
+        labels:
+          region: asia
+
+  # ── Prometheus self-scrape ──────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
