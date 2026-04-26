@@ -65,6 +65,9 @@ package-lock.json
 *~
 .history/
 
+# Simulator generated data (pickle files — regenerated on first run)
+simulator/data/*.pkl
+
 # Project-specific
 *.log
 *.pid
