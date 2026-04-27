@@ -38,6 +38,52 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── API Gateways (one per region) ───────────────────────────────────────────
+  # Each listens on :8080 inside the container; host ports 8081/8082/8083
+  # differentiate regions. distroless image has no shell, so no health check —
+  # Redis health + restart:on-failure is the recovery mechanism.
+  gateway-us:
+    build: ./gateway
+    container_name: gateway-us
+    environment:
+      - REGION=us
+      - REDIS_ADDR=redis-us:6379
+      - LISTEN=:8080
+    ports:
+      - "8081:8080"
+    depends_on:
+      redis-us:
+        condition: service_healthy
+    restart: on-failure
+
+  gateway-eu:
+    build: ./gateway
+    container_name: gateway-eu
+    environment:
+      - REGION=eu
+      - REDIS_ADDR=redis-eu:6379
+      - LISTEN=:8080
+    ports:
+      - "8082:8080"
+    depends_on:
+      redis-eu:
+        condition: service_healthy
+    restart: on-failure
+
+  gateway-asia:
+    build: ./gateway
+    container_name: gateway-asia
+    environment:
+      - REGION=asia
+      - REDIS_ADDR=redis-asia:6379
+      - LISTEN=:8080
+    ports:
+      - "8083:8080"
+    depends_on:
+      redis-asia:
+        condition: service_healthy
+    restart: on-failure
+
   # ── Metrics ─────────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest

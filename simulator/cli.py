@@ -1,27 +1,32 @@
 """gdrl traffic simulator CLI.
 
-Day 2: print mode — requests are printed as JSON lines to stdout.
-Day 3: replace _print_request with a real httpx send.
+Day 3: real HTTP mode — requests are sent via httpx to the three regional
+gateways. Each request's region field is always matched to the gateway it's
+routed to (Contract 1 enforces this on the gateway side).
 
 Usage:
-    python -m simulator steady --rps 100 --duration 60
-    python -m simulator spike --base 100 --peak 1000 --at 30
-    python -m simulator noisy --culprit free_00001 --share 0.9
+    python -m simulator steady --rps 100 --duration 60 --target-region us
+    python -m simulator steady --rps 100 --duration 60 --distribution us:0.5,eu:0.3,asia:0.2
+    python -m simulator spike  --base 100 --peak 1000 --at 30 --target-region us
+    python -m simulator noisy  --culprit free_00001 --share 0.9 --rps 100
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 import time
 from dataclasses import dataclass
 
 import click
+import httpx
 
 from simulator.populations import User, load
 from simulator.runner import Stats, run_at_rate
 
 REGIONS = ["us", "eu", "asia"]
+
+# Host ports for each gateway instance (matches docker-compose port bindings).
+GATEWAY_PORTS = {"us": 8081, "eu": 8082, "asia": 8083}
 
 ENDPOINTS = [
     "/api/v1/search",
@@ -32,11 +37,54 @@ ENDPOINTS = [
 ]
 
 # Tier sampling weights for mixed-population patterns.
-# Reflects realistic traffic: free dominates by volume, internal is rare.
 _TIER_WEIGHTS = {"free": 0.7, "premium": 0.2, "internal": 0.1}
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Per-run counters (asyncio is single-threaded; no locks needed) ────────────
+
+@dataclass
+class _Counters:
+    allowed: int = 0
+    denied: int = 0
+    http_errors: int = 0
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def parse_distribution(s: str) -> dict[str, float]:
+    """Parse 'us:0.5,eu:0.3,asia:0.2' into {region: weight}."""
+    result: dict[str, float] = {}
+    for part in s.split(","):
+        region, weight = part.strip().split(":")
+        result[region.strip()] = float(weight)
+    return result
+
+
+def _gateway_url(region: str) -> str:
+    return f"http://localhost:{GATEWAY_PORTS[region]}/check"
+
+
+def _pick_target(
+    target_region: str,
+    distribution: dict[str, float] | None,
+) -> tuple[str, str]:
+    """Return (region, gateway_url) for one request.
+
+    Distribution takes precedence over target_region when both are provided.
+    'all' in target_region picks uniformly across all three regions.
+    The returned region is always consistent with the returned URL so the
+    gateway's region-validation check passes.
+    """
+    if distribution:
+        region = random.choices(
+            list(distribution.keys()), weights=list(distribution.values()), k=1
+        )[0]
+    elif target_region == "all":
+        region = random.choice(REGIONS)
+    else:
+        region = target_region
+    return region, _gateway_url(region)
+
 
 def _make_request(user: User, region: str) -> dict:
     return {
@@ -47,11 +95,6 @@ def _make_request(user: User, region: str) -> dict:
     }
 
 
-async def _print_request(req: dict) -> None:
-    """Day 2 send function — prints JSON to stdout. Swap for httpx on Day 3."""
-    print(json.dumps(req), flush=True)
-
-
 def _pick_user(pops: dict[str, list[User]]) -> User:
     tier = random.choices(
         list(_TIER_WEIGHTS.keys()), weights=list(_TIER_WEIGHTS.values()), k=1
@@ -59,17 +102,45 @@ def _pick_user(pops: dict[str, list[User]]) -> User:
     return random.choice(pops[tier])
 
 
-def _pick_region(target: str) -> str:
-    return random.choice(REGIONS) if target == "all" else target
+async def _send(
+    client: httpx.AsyncClient,
+    url: str,
+    req: dict,
+    counters: _Counters,
+) -> None:
+    """Send one request to the gateway and record the outcome.
+
+    Non-200 HTTP responses and network errors propagate as exceptions so the
+    runner's stats.errors counter captures them.
+    """
+    resp = await client.post(url, json=req, timeout=5.0)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:80]}")
+    data = resp.json()
+    if data.get("allowed"):
+        counters.allowed += 1
+    else:
+        counters.denied += 1
 
 
-def _summarize(label: str, stats: Stats, elapsed: float) -> None:
+def _summarize(
+    label: str,
+    stats: Stats,
+    elapsed: float,
+    counters: _Counters | None = None,
+) -> None:
     actual_rps = stats.sent / elapsed if elapsed > 0 else 0
-    click.echo(
+    msg = (
         f"[{label}] sent={stats.sent} errors={stats.errors} "
-        f"actual_rps={actual_rps:.1f}",
-        err=True,
+        f"actual_rps={actual_rps:.1f}"
     )
+    if counters is not None:
+        allow_pct = counters.allowed / max(stats.sent, 1) * 100
+        msg += (
+            f"  |  allowed={counters.allowed} denied={counters.denied} "
+            f"http_err={counters.http_errors} ({allow_pct:.0f}% pass)"
+        )
+    click.echo(msg, err=True)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -77,6 +148,15 @@ def _summarize(label: str, stats: Stats, elapsed: float) -> None:
 @click.group()
 def cli() -> None:
     """gdrl traffic simulator."""
+
+
+_distribution_option = click.option(
+    "--distribution",
+    default=None,
+    metavar="DIST",
+    help="Weighted region distribution, e.g. us:0.5,eu:0.3,asia:0.2. "
+         "Overrides --target-region when provided.",
+)
 
 
 @cli.command()
@@ -87,23 +167,31 @@ def cli() -> None:
     default="us",
     show_default=True,
     type=click.Choice(["us", "eu", "asia", "all"]),
-    help="Region to target. 'all' picks randomly across all three.",
+    help="Region to target. 'all' picks uniformly across all three.",
 )
-def steady(rps: float, duration: float, target_region: str) -> None:
+@_distribution_option
+def steady(rps: float, duration: float, target_region: str, distribution: str | None) -> None:
     """Steady baseline traffic from a realistic mix of all three user tiers."""
     pops = load()
+    dist = parse_distribution(distribution) if distribution else None
+    counters = _Counters()
 
-    async def _req() -> None:
-        user = _pick_user(pops)
-        region = _pick_region(target_region)
-        await _print_request(_make_request(user, region))
+    async def _run() -> Stats:
+        async with httpx.AsyncClient() as client:
+            async def _req() -> None:
+                user = _pick_user(pops)
+                region, url = _pick_target(target_region, dist)
+                await _send(client, url, _make_request(user, region), counters)
+            return await run_at_rate(_req, rps, duration)
 
     click.echo(
-        f"steady  rps={rps} duration={duration}s target={target_region}", err=True
+        f"steady  rps={rps} duration={duration}s "
+        f"target={distribution or target_region}",
+        err=True,
     )
     t0 = time.monotonic()
-    stats = asyncio.run(run_at_rate(_req, rps, duration))
-    _summarize("steady", stats, time.monotonic() - t0)
+    stats = asyncio.run(_run())
+    _summarize("steady", stats, time.monotonic() - t0, counters)
 
 
 @cli.command()
@@ -116,19 +204,14 @@ def steady(rps: float, duration: float, target_region: str) -> None:
     show_default=True,
     help="Seconds of baseline before spike begins.",
 )
-@click.option(
-    "--spike-duration",
-    default=30.0,
-    show_default=True,
-    help="How long the spike lasts in seconds.",
-)
+@click.option("--spike-duration", default=30.0, show_default=True, help="Duration of spike in seconds.")
 @click.option("--duration", default=120.0, show_default=True, help="Total run duration in seconds.")
 @click.option(
     "--target-region",
     default="us",
     show_default=True,
     type=click.Choice(["us", "eu", "asia"]),
-    help="Region to target.",
+    help="Region to spike.",
 )
 def spike(
     base: float,
@@ -140,41 +223,43 @@ def spike(
 ) -> None:
     """Spike pattern: steady base → sudden burst → recovery. Simulates a product launch."""
     pops = load()
+    counters = _Counters()
 
-    async def _req() -> None:
-        user = _pick_user(pops)
-        await _print_request(_make_request(user, target_region))
+    async def _run() -> Stats:
+        async with httpx.AsyncClient() as client:
+            async def _req() -> None:
+                user = _pick_user(pops)
+                _, url = _pick_target(target_region, None)
+                await _send(client, url, _make_request(user, target_region), counters)
+
+            t0 = time.monotonic()
+            s1 = await run_at_rate(_req, base, spike_at)
+            _summarize("pre-spike", s1, time.monotonic() - t0)
+
+            burst = min(spike_duration, max(0.0, duration - spike_at))
+            t1 = time.monotonic()
+            s2 = await run_at_rate(_req, peak, burst, concurrency=200)
+            _summarize("spike", s2, time.monotonic() - t1)
+
+            remaining = duration - spike_at - burst
+            if remaining > 0:
+                t2 = time.monotonic()
+                s3 = await run_at_rate(_req, base, remaining)
+                _summarize("recovery", s3, time.monotonic() - t2)
+                return Stats(
+                    s1.sent + s2.sent + s3.sent,
+                    s1.errors + s2.errors + s3.errors,
+                )
+            return Stats(s1.sent + s2.sent, s1.errors + s2.errors)
 
     click.echo(
         f"spike  base={base} peak={peak} at={spike_at}s "
         f"spike_duration={spike_duration}s total={duration}s target={target_region}",
         err=True,
     )
-
-    async def _run() -> Stats:
-        t0 = time.monotonic()
-        s1 = await run_at_rate(_req, base, spike_at)
-        _summarize("pre-spike", s1, time.monotonic() - t0)
-
-        burst = min(spike_duration, max(0.0, duration - spike_at))
-        t1 = time.monotonic()
-        s2 = await run_at_rate(_req, peak, burst, concurrency=200)
-        _summarize("spike", s2, time.monotonic() - t1)
-
-        remaining = duration - spike_at - burst
-        if remaining > 0:
-            t2 = time.monotonic()
-            s3 = await run_at_rate(_req, base, remaining)
-            _summarize("recovery", s3, time.monotonic() - t2)
-            return Stats(
-                s1.sent + s2.sent + s3.sent,
-                s1.errors + s2.errors + s3.errors,
-            )
-        return Stats(s1.sent + s2.sent, s1.errors + s2.errors)
-
     t0 = time.monotonic()
     stats = asyncio.run(_run())
-    _summarize("total", stats, time.monotonic() - t0)
+    _summarize("total", stats, time.monotonic() - t0, counters)
 
 
 @cli.command()
@@ -194,15 +279,18 @@ def spike(
     show_default=True,
     type=click.Choice(["us", "eu", "asia", "all"]),
 )
+@_distribution_option
 def noisy(
     culprit: str,
     share: float,
     rps: float,
     duration: float,
     target_region: str,
+    distribution: str | None,
 ) -> None:
     """Noisy neighbor: one user_id drives the majority of a tier's traffic."""
     pops = load()
+    dist = parse_distribution(distribution) if distribution else None
     all_users = pops["free"] + pops["premium"] + pops["internal"]
 
     culprit_user = next((u for u in all_users if u.user_id == culprit), None)
@@ -213,16 +301,21 @@ def noisy(
         )
         culprit_user = pops["free"][0]
 
-    async def _req() -> None:
-        user = culprit_user if random.random() < share else random.choice(all_users)
-        region = _pick_region(target_region)
-        await _print_request(_make_request(user, region))
+    counters = _Counters()
+
+    async def _run() -> Stats:
+        async with httpx.AsyncClient() as client:
+            async def _req() -> None:
+                user = culprit_user if random.random() < share else random.choice(all_users)
+                region, url = _pick_target(target_region, dist)
+                await _send(client, url, _make_request(user, region), counters)
+            return await run_at_rate(_req, rps, duration)
 
     click.echo(
         f"noisy  culprit={culprit_user.user_id} share={share:.0%} "
-        f"rps={rps} duration={duration}s target={target_region}",
+        f"rps={rps} duration={duration}s target={distribution or target_region}",
         err=True,
     )
     t0 = time.monotonic()
-    stats = asyncio.run(run_at_rate(_req, rps, duration))
-    _summarize("noisy", stats, time.monotonic() - t0)
+    stats = asyncio.run(_run())
+    _summarize("noisy", stats, time.monotonic() - t0, counters)

@@ -1,0 +1,112 @@
+{
+  "title": "gdrl — Geo-Distributed Rate Limiter",
+  "uid": "gdrl-main",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-5m", "to": "now" },
+  "timezone": "browser",
+  "tags": ["gdrl", "rate-limiter"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate by Region (req/s)",
+      "description": "Total /check decisions per second, split by region.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total[1m])) by (region)",
+          "legendFormat": "{{region}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Denial Rate by Tier (req/s)",
+      "description": "Rate of denied requests per tier. Spikes here show the limiter activating.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total{decision=\"denied\"}[1m])) by (tier)",
+          "legendFormat": "denied — {{tier}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total{decision=\"allowed\"}[1m])) by (tier)",
+          "legendFormat": "allowed — {{tier}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Decision Latency by Region (p50 / p95 / p99)",
+      "description": "Histogram quantiles of /check end-to-end latency including Redis Lua. Buckets are sub-millisecond.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(rl_decision_duration_seconds_bucket[1m])) by (le, region))",
+          "legendFormat": "p50 — {{region}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(rl_decision_duration_seconds_bucket[1m])) by (le, region))",
+          "legendFormat": "p95 — {{region}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(rl_decision_duration_seconds_bucket[1m])) by (le, region))",
+          "legendFormat": "p99 — {{region}}",
+          "refId": "C"
+        }
+      ]
+    }
+  ],
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "links": []
+}
