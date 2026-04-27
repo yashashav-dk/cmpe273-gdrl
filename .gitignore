@@ -68,6 +68,9 @@ package-lock.json
 # Simulator generated data (pickle files — regenerated on first run)
 simulator/data/*.pkl
 
+# Agent runtime artifacts
+agent/decisions.jsonl
+
 # Project-specific
 *.log
 *.pid
