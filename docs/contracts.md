@@ -39,19 +39,34 @@ Gateways run on:
 **Owners:** Nikhil (writes local), Yashashav (writes global)
 
 ```
-Local counter:   rl:local:{region}:{tier}:{user_id}    (TTL = window + 60s, INTEGER — monotonic allowed-count)
-Global view:     rl:global:{tier}:{user_id}            (HASH — one field per region, max-merge G-Counter)
-Policy cache:    policy:{region}:{tier}                (JSON string — set by Atharv's agent)
-User override:   override:{user_id}                    (JSON string — set by Atharv's agent)
-Dirty signal:    dirty:{region}                        (pub/sub channel — payload: "{tier}:{user_id}")
-Sync broadcast:  sync:deltas                           (pub/sub channel — cross-region G-Counter envelopes)
+Local counter:   rl:local:{region}:{tier}:{user_id}              (TTL = window + 60s, INTEGER — monotonic allowed-count)
+Global view:     rl:global:{tier}:{user_id}:{window_id}          (HASH — one field per region, max-merge G-Counter; window_id = Unix_ts / 60)
+Policy cache:    policy:{region}:{tier}                          (JSON string — set by Atharv's agent)
+User override:   override:{user_id}                              (JSON string — set by Atharv's agent)
+Sync channel:    rl:sync:counter                                 (pub/sub channel — JSON payload, see below)
 ```
 
+Sync channel payload (`rl:sync:counter`):
+```json
+{
+  "tier":      "free",
+  "user_id":   "u_123",
+  "window_id": 29620586,
+  "region":    "us",
+  "value":     47,
+  "ts_ms":     1714089600000
+}
+```
+- `window_id` = `floor(unix_timestamp_seconds / 60)` — identifies the rate-limit window.
+- `value` is the **absolute** local slot count (not a delta) — sync service applies max-merge on receive.
+- `ts_ms` is the publish timestamp; sync service uses it to populate `rl_sync_lag_seconds`.
+
 Semantics:
-- `rl:local:*` is written ONLY by the gateway (Nikhil). Monotonically increasing.
+- `rl:local:*` is written ONLY by the gateway (Nikhil). Monotonically increasing within a window.
+- `rl:global:*` keys include `window_id` so counters reset naturally each minute (keys expire via TTL after the window passes).
 - `rl:global:*` is written ONLY by the sync service (Yashashav). One field per region, max-merge on receive.
 - `policy:*` and `override:*` are written ONLY by the AI agent (Atharv). Gateways read-only.
-- Gateway publishes `dirty:{region}` after every allowed request (fire-and-forget).
+- Gateway publishes to `rl:sync:counter` after every allowed request (fire-and-forget), carrying the full payload so the sync service needs no additional Redis read.
 
 ---
 
@@ -61,7 +76,7 @@ Semantics:
 
 ```
 # Gateway metrics
-rl_requests_total{region, tier, endpoint, decision="allow|deny"}   counter
+rl_requests_total{region, tier, endpoint, decision="allowed|denied|error"}   counter
 rl_decision_duration_seconds{region}                                histogram
 rl_counter_value{region, tier, user_id}                             gauge  (sampled)
 rl_policy_version{region, tier}                                     gauge
