@@ -2,24 +2,52 @@
   "title": "gdrl — Geo-Distributed Rate Limiter",
   "uid": "gdrl-main",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": { "from": "now-5m", "to": "now" },
   "timezone": "browser",
   "tags": ["gdrl", "rate-limiter"],
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "links": [],
   "panels": [
+
+    { "id": 1, "type": "row", "title": "Traffic", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": [] },
+
     {
-      "id": 1,
-      "title": "Request Rate by Region (req/s)",
-      "description": "Total /check decisions per second, split by region.",
+      "id": 2,
+      "title": "Total RPS",
+      "description": "All /check decisions per second across every region and tier.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
       "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 15 } }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total[1m]))",
+          "legendFormat": "total",
+          "refId": "A"
         }
+      ]
+    },
+
+    {
+      "id": 3,
+      "title": "RPS by Region",
+      "description": "Per-region request rate. Divergence during failover or spike demos.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } }
       },
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -34,19 +62,83 @@
         }
       ]
     },
+
     {
-      "id": 2,
-      "title": "Denial Rate by Tier (req/s)",
-      "description": "Rate of denied requests per tier. Spikes here show the limiter activating.",
+      "id": 4,
+      "title": "RPS by Tier",
+      "description": "Per-tier request rate. Internal should always be highest, free lowest per-user.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
       "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total[1m])) by (tier)",
+          "legendFormat": "{{tier}}",
+          "refId": "A"
         }
+      ]
+    },
+
+    { "id": 5, "type": "row", "title": "Decisions", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "panels": [] },
+
+    {
+      "id": 6,
+      "title": "Allow vs Deny Rate",
+      "description": "Overall allow and deny rates. Deny spikes = rate limiter activating.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "denied" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "allowed" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total{decision=\"allowed\"}[1m]))",
+          "legendFormat": "allowed",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "sum(rate(rl_requests_total{decision=\"denied\"}[1m]))",
+          "legendFormat": "denied",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 7,
+      "title": "Deny Rate by Tier",
+      "description": "Denied req/s per tier. Free users hit limits first; internal should rarely be denied.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } }
       },
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -56,29 +148,24 @@
         {
           "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
           "expr": "sum(rate(rl_requests_total{decision=\"denied\"}[1m])) by (tier)",
-          "legendFormat": "denied — {{tier}}",
+          "legendFormat": "{{tier}}",
           "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
-          "expr": "sum(rate(rl_requests_total{decision=\"allowed\"}[1m])) by (tier)",
-          "legendFormat": "allowed — {{tier}}",
-          "refId": "B"
         }
       ]
     },
+
+    { "id": 8, "type": "row", "title": "Latency", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "panels": [] },
+
     {
-      "id": 3,
-      "title": "Decision Latency by Region (p50 / p95 / p99)",
-      "description": "Histogram quantiles of /check end-to-end latency including Redis Lua. Buckets are sub-millisecond.",
+      "id": 9,
+      "title": "Decision Latency by Region — p50 / p95 / p99",
+      "description": "Histogram quantiles of /check wall-clock time (gateway receipt → Redis Lua return). Buckets are sub-millisecond; p99 > 5ms indicates Redis pressure.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 19 },
       "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
       "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2 }
-        }
+        "defaults": { "unit": "s", "custom": { "lineWidth": 2 } }
       },
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -104,9 +191,192 @@
           "refId": "C"
         }
       ]
+    },
+
+    { "id": 10, "type": "row", "title": "Sync Health", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "panels": [] },
+
+    {
+      "id": 11,
+      "title": "Sync Lag by Region Pair — p50 / p95",
+      "description": "Time from a counter increment in origin region to application in dest region. Target: p95 < 1s at 500ms sync interval. Will show No Data until Yashashav's sync service is running.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(rl_sync_lag_seconds_bucket[1m])) by (le, from_region, to_region))",
+          "legendFormat": "p50 {{from_region}}→{{to_region}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(rl_sync_lag_seconds_bucket[1m])) by (le, from_region, to_region))",
+          "legendFormat": "p95 {{from_region}}→{{to_region}}",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "title": "Counter Drift Between Regions",
+      "description": "max(slot) − min(slot) per user across regions. Near-zero at steady state; spikes during partition; collapses on heal. Demo signal for CRDT convergence.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 8 } }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "topk(10, rl_global_counter_drift)",
+          "legendFormat": "{{tier}}:{{user_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+
+    { "id": 13, "type": "row", "title": "Policy", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }, "panels": [] },
+
+    {
+      "id": 14,
+      "title": "Policy Version — US",
+      "description": "Active policy generation per tier in the US gateway. 0 = static baseline; >0 = Atharv's agent has written a dynamic policy.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "rl_policy_version{region=\"us\"}",
+          "legendFormat": "{{tier}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+
+    {
+      "id": 15,
+      "title": "Policy Version — EU",
+      "description": "Active policy generation per tier in the EU gateway.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "rl_policy_version{region=\"eu\"}",
+          "legendFormat": "{{tier}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+
+    {
+      "id": 16,
+      "title": "Policy Version — Asia",
+      "description": "Active policy generation per tier in the Asia gateway.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "blue", "value": 1 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+          "expr": "rl_policy_version{region=\"asia\"}",
+          "legendFormat": "{{tier}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
     }
-  ],
-  "annotations": { "list": [] },
-  "templating": { "list": [] },
-  "links": []
+
+  ]
 }
