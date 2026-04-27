@@ -76,7 +76,7 @@ Semantics:
 
 ```
 # Gateway metrics
-rl_requests_total{region, tier, endpoint, decision="allow|deny"}   counter
+rl_requests_total{region, tier, endpoint, decision="allowed|denied|error"}   counter
 rl_decision_duration_seconds{region}                                histogram
 rl_counter_value{region, tier, user_id}                             gauge  (sampled)
 rl_policy_version{region, tier}                                     gauge
