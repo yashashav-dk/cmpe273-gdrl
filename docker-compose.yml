@@ -117,7 +117,7 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/grafana/dashboards:/etc/grafana/dashboards:ro
       - ./infra/grafana/data:/var/lib/grafana
     depends_on:
       - prometheus
