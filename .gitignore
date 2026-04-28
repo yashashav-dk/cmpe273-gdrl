@@ -86,12 +86,12 @@ secrets/
 # Docker
 .docker/
 
-# Claude Code
+# Claude Code (per-user; do not share LLM config across collaborators)
 .claude/
 CLAUDE.md
 
-# Spec-kit local cache
-.specify/cache/
+# Spec-kit (per-user scaffold; do not share)
+.specify/
 
 # Test artifacts (keep results, ignore working dirs)
 tests/chaos/.work/
