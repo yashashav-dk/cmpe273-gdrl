@@ -1,12 +1,21 @@
 """Async rate-controlled request loop.
 
-Drives a caller-supplied coroutine at a fixed RPS using a semaphore to cap
-concurrency. The send function is injected by the CLI so Day 3 can swap
-print_request for a real httpx call without touching this module.
+Drives a caller-supplied coroutine at a target RPS using a semaphore to cap
+concurrency. Supports two scheduling modes:
+
+  Poisson (default) — inter-arrival times drawn from Exp(rps), producing a
+    realistic Poisson arrival process with natural burstiness.
+  Fixed             — deterministic 1/rps interval with drift correction
+    (original behaviour; useful for reproducible benchmarks).
+
+run_with_diurnal wraps run_at_rate with a sinusoidal RPS envelope so a
+single steady run can simulate 24-hour traffic patterns at any time scale.
 """
 from __future__ import annotations
 
 import asyncio
+import math
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -25,16 +34,17 @@ async def run_at_rate(
     rps: float,
     duration: float,
     concurrency: int = 50,
+    poisson: bool = True,
 ) -> Stats:
     """Drive request_fn at `rps` req/s for `duration` seconds.
 
-    Uses a token-interval loop: one task is created every 1/rps seconds.
-    The semaphore caps how many run concurrently so slow responses don't
-    pile up unboundedly.
+    With poisson=True (default) inter-arrival times are drawn from
+    Exp(rps), matching real-world Poisson arrival processes.
+    With poisson=False a fixed 1/rps interval with drift correction is
+    used — deterministic and good for reproducible load tests.
     """
     stats = Stats()
     sem = asyncio.Semaphore(concurrency)
-    interval = 1.0 / rps
     end_time = time.monotonic() + duration
     tasks: list[asyncio.Task] = []
 
@@ -49,7 +59,8 @@ async def run_at_rate(
     next_tick = time.monotonic()
     while time.monotonic() < end_time:
         tasks.append(asyncio.create_task(_bounded()))
-        next_tick += interval
+        # Poisson process: inter-arrivals ~ Exp(λ=rps), mean = 1/rps
+        next_tick += random.expovariate(rps) if poisson else (1.0 / rps)
         sleep_for = next_tick - time.monotonic()
         if sleep_for > 0:
             await asyncio.sleep(sleep_for)
@@ -57,3 +68,41 @@ async def run_at_rate(
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     return stats
+
+
+async def run_with_diurnal(
+    request_fn: RequestFn,
+    base_rps: float,
+    duration: float,
+    period: float = 86400.0,
+    amplitude: float = 0.7,
+    concurrency: int = 50,
+) -> Stats:
+    """Drive request_fn with a sinusoidally-varying RPS for `duration` seconds.
+
+    RPS(t) = base_rps * max(0.1, 1 + amplitude * sin(2π·t/period − π/2))
+
+    The phase offset −π/2 starts the wave at its trough (simulating 3 AM)
+    and peaks at period/4 (simulating noon). With amplitude=0.7 the rate
+    swings from 30% to 170% of base_rps.
+
+    For a compressed demo set period=120 to complete a full cycle in 2 min.
+    """
+    segment = 5.0  # seconds between RPS recalculations
+    start = time.monotonic()
+    end = start + duration
+    total = Stats()
+
+    while True:
+        now = time.monotonic()
+        if now >= end:
+            break
+        elapsed = now - start
+        multiplier = max(0.1, 1.0 + amplitude * math.sin(2 * math.pi * elapsed / period - math.pi / 2))
+        effective_rps = base_rps * multiplier
+        seg_dur = min(segment, end - now)
+        s = await run_at_rate(request_fn, effective_rps, seg_dur, concurrency)
+        total.sent += s.sent
+        total.errors += s.errors
+
+    return total
