@@ -21,7 +21,7 @@ import click
 import httpx
 
 from simulator.populations import User, load
-from simulator.runner import Stats, run_at_rate
+from simulator.runner import Stats, run_at_rate, run_with_diurnal
 
 REGIONS = ["us", "eu", "asia"]
 
@@ -170,8 +170,33 @@ _distribution_option = click.option(
     help="Region to target. 'all' picks uniformly across all three.",
 )
 @_distribution_option
-def steady(rps: float, duration: float, target_region: str, distribution: str | None) -> None:
-    """Steady baseline traffic from a realistic mix of all three user tiers."""
+@click.option(
+    "--diurnal/--no-diurnal",
+    default=False,
+    show_default=True,
+    help="Apply a sine-wave diurnal envelope to RPS (30%–170% of base).",
+)
+@click.option(
+    "--diurnal-period",
+    default=86400.0,
+    show_default=True,
+    metavar="SECONDS",
+    help="Diurnal cycle length in seconds. Use 120 for a compressed 2-min demo cycle.",
+)
+def steady(
+    rps: float,
+    duration: float,
+    target_region: str,
+    distribution: str | None,
+    diurnal: bool,
+    diurnal_period: float,
+) -> None:
+    """Steady baseline traffic from a realistic mix of all three user tiers.
+
+    Inter-arrival times follow a Poisson process (Exp(rps)) for realistic
+    burstiness. Pass --diurnal to add a sinusoidal 24-hour RPS envelope;
+    use --diurnal-period 120 for a compressed 2-minute demo cycle.
+    """
     pops = load()
     dist = parse_distribution(distribution) if distribution else None
     counters = _Counters()
@@ -182,11 +207,14 @@ def steady(rps: float, duration: float, target_region: str, distribution: str | 
                 user = _pick_user(pops)
                 region, url = _pick_target(target_region, dist)
                 await _send(client, url, _make_request(user, region), counters)
+            if diurnal:
+                return await run_with_diurnal(_req, rps, duration, period=diurnal_period)
             return await run_at_rate(_req, rps, duration)
 
+    suffix = f"  diurnal=on period={diurnal_period}s" if diurnal else ""
     click.echo(
         f"steady  rps={rps} duration={duration}s "
-        f"target={distribution or target_region}",
+        f"target={distribution or target_region}{suffix}",
         err=True,
     )
     t0 = time.monotonic()

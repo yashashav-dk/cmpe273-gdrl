@@ -26,7 +26,8 @@ docker compose up -d
 
 ### `steady` — Baseline traffic
 
-Mixed user population (70% free / 20% premium / 10% internal).
+Mixed user population (70% free / 20% premium / 10% internal).  
+Inter-arrival times follow a **Poisson process** (Exp(rps)) for realistic burstiness.
 
 ```sh
 # Single region
@@ -37,14 +38,22 @@ python -m simulator steady --rps 300 --duration 60 --target-region all
 
 # Weighted distribution
 python -m simulator steady --rps 300 --duration 60 --distribution us:0.5,eu:0.3,asia:0.2
+
+# Diurnal pattern — full 24-hour sine wave (realistic long-run)
+python -m simulator steady --rps 100 --duration 3600 --target-region all --diurnal
+
+# Diurnal pattern — compressed 2-minute demo cycle
+python -m simulator steady --rps 100 --duration 120 --target-region all --diurnal --diurnal-period 120
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--rps` | 100 | Requests per second |
+| `--rps` | 100 | Target requests per second (mean of Poisson process) |
 | `--duration` | 60 | Duration in seconds |
 | `--target-region` | us | `us \| eu \| asia \| all` |
 | `--distribution` | — | Weighted split, e.g. `us:0.5,eu:0.3,asia:0.2`. Overrides `--target-region`. |
+| `--diurnal` | off | Enable sine-wave RPS envelope (30%–170% of `--rps`) |
+| `--diurnal-period` | 86400 | Cycle length in seconds. Use `120` for a fast demo cycle. |
 
 ### `spike` — Product launch simulation
 
