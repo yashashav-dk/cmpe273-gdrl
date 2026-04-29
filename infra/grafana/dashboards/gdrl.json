@@ -2,12 +2,38 @@
   "title": "gdrl — Geo-Distributed Rate Limiter",
   "uid": "gdrl-main",
   "schemaVersion": 38,
-  "version": 2,
+  "version": 3,
   "refresh": "5s",
   "time": { "from": "now-5m", "to": "now" },
   "timezone": "browser",
   "tags": ["gdrl", "rate-limiter"],
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "builtIn": 0,
+        "datasource": { "type": "prometheus", "uid": "gdrl-prometheus" },
+        "enable": true,
+        "expr": "changes(rl_policy_version[1m]) > 0",
+        "hide": false,
+        "iconColor": "#1F78C1",
+        "name": "Agent Policy Change",
+        "step": "60s",
+        "titleFormat": "Policy updated — {{region}} / {{tier}}",
+        "textFormat": "Agent wrote a new rate-limit policy",
+        "type": "alert",
+        "useValueForTime": false
+      }
+    ]
+  },
   "templating": { "list": [] },
   "links": [],
   "panels": [
