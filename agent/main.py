@@ -3,12 +3,20 @@ import time
 
 from feature_extractor import extract
 from metrics_client import PrometheusClient
+from predictor import EWMAPredictor
 
 TICK_INTERVAL_SECONDS = 10
 
 
 async def agent_loop() -> None:
     client = PrometheusClient()
+    predictor = EWMAPredictor(alpha=0.3)
+
+    history = client.request_rate_range(window_minutes=30)
+    predictor.warm_up(history)
+    total_points = sum(len(v) for v in history.values())
+    print(f"  EWMA warmed up from {total_points} data points")
+
     tick = 0
     while True:
         tick += 1
@@ -16,11 +24,16 @@ async def agent_loop() -> None:
         print(f"[{ts}] agent tick #{tick}")
 
         features = extract(client)
-        for region, f in features.items():
-            print(
-                f"  {region}: free={f['free_rps']} rps  premium={f['premium_rps']} rps"
-                f"  internal={f['internal_rps']} rps  rejection={f['rejection_rate']:.2%}"
-            )
+        predictions = predictor.update(features)
+
+        for region, tiers in predictions.items():
+            for tier, pred in tiers.items():
+                actual = features[region].get(f"{tier}_rps", 0.0)
+                spike_tag = "  *** SPIKE ***" if pred.is_spike else ""
+                print(
+                    f"  {region}/{tier}: actual={actual:.1f} rps"
+                    f"  predicted={pred.rps:.1f} rps{spike_tag}"
+                )
 
         await asyncio.sleep(TICK_INTERVAL_SECONDS)
 

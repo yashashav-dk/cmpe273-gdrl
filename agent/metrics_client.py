@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 import random
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 PROMETHEUS_URL = "http://localhost:9090"
@@ -44,6 +46,35 @@ class PrometheusClient:
         )
         return result if result is not None else _synthetic_rejection_rate()
 
+    def request_rate_range(
+        self, window_minutes: int = 30, step: str = "1m"
+    ) -> dict[str, list[float]]:
+        """RPS time series per 'region/tier' over the last window_minutes.
+
+        Returns {"us/free": [rps_t0, ..., rps_tn], ...} — used to warm-start EWMA.
+        """
+        if self._prom is not None:
+            try:
+                end_time = datetime.now()
+                start_time = end_time - timedelta(minutes=window_minutes)
+                rows = self._prom.custom_query_range(
+                    query="sum(rate(rl_requests_total[1m])) by (region, tier)",
+                    start_time=start_time,
+                    end_time=end_time,
+                    step=step,
+                )
+                series: dict[str, list[float]] = {}
+                for row in rows:
+                    region = row["metric"].get("region", "")
+                    tier = row["metric"].get("tier", "")
+                    if region and tier:
+                        series[f"{region}/{tier}"] = [float(v[1]) for v in row["values"]]
+                if series:
+                    return series
+            except Exception:
+                print(f"[metrics_client] range query failed — using synthetic history")
+        return _synthetic_request_rate_range(window_minutes)
+
 
 def _synthetic_request_rate() -> list[dict[str, Any]]:
     ts = time.time()
@@ -55,6 +86,20 @@ def _synthetic_request_rate() -> list[dict[str, Any]]:
         for r in REGIONS
         for t in TIERS
     ]
+
+
+def _synthetic_request_rate_range(window_minutes: int) -> dict[str, list[float]]:
+    # Mirrors Prathamesh's diurnal model: amplitude=0.7 sinusoid over a 60-min compressed period
+    result: dict[str, list[float]] = {}
+    for r in REGIONS:
+        for t in TIERS:
+            base = _MOCK_BASE_RPS[t]
+            series = []
+            for i in range(window_minutes):
+                multiplier = max(0.1, 1.0 + 0.7 * math.sin(2 * math.pi * i / 60 - math.pi / 2))
+                series.append(round(base * multiplier * random.uniform(0.9, 1.1), 2))
+            result[f"{r}/{t}"] = series
+    return result
 
 
 def _synthetic_rejection_rate() -> list[dict[str, Any]]:
