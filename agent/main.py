@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from feature_extractor import extract
 from metrics_client import PrometheusClient
 
 TICK_INTERVAL_SECONDS = 10
@@ -14,12 +15,12 @@ async def agent_loop() -> None:
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         print(f"[{ts}] agent tick #{tick}")
 
-        rates = client.request_rate()
-        for row in rates:
-            region = row["metric"].get("region", "?")
-            tier = row["metric"].get("tier", "?")
-            rps = row["value"][1]
-            print(f"  {region}/{tier}: {rps} rps")
+        features = extract(client)
+        for region, f in features.items():
+            print(
+                f"  {region}: free={f['free_rps']} rps  premium={f['premium_rps']} rps"
+                f"  internal={f['internal_rps']} rps  rejection={f['rejection_rate']:.2%}"
+            )
 
         await asyncio.sleep(TICK_INTERVAL_SECONDS)
 
