@@ -39,7 +39,7 @@ class PrometheusClient:
     def rejection_rate(self, window: str = "1m") -> list[dict[str, Any]]:
         """Fraction of denied requests per region+tier over `window`."""
         result = self._query(
-            f'sum(rate(rl_requests_total{{decision="deny"}}[{window}])) by (region, tier)'
+            f'sum(rate(rl_requests_total{{decision="denied"}}[{window}])) by (region, tier)'
             f" / sum(rate(rl_requests_total[{window}])) by (region, tier)"
         )
         return result if result is not None else _synthetic_rejection_rate()
