@@ -15,6 +15,9 @@ dependencies = [
     "statsmodels>=0.14",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 agent = "agent.main:main"
 

@@ -3,3 +3,4 @@ redis>=5.0
 pandas>=2.1
 scikit-learn>=1.4
 statsmodels>=0.14
+pytest>=8.0
