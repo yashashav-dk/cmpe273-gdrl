@@ -76,6 +76,32 @@ class PrometheusClient:
         return _synthetic_request_rate_range(window_minutes)
 
 
+    def top_user_share(self) -> dict[str, dict[str, tuple[str, float]]]:
+        """Top user_id and their share of total counter per region+tier.
+
+        Returns {region: {tier: (user_id, share_fraction)}} using rl_counter_value
+        (Contract 3). Used for noisy-neighbor detection in the decider.
+        """
+        result = self._query("rl_counter_value")
+        if result is not None:
+            groups: dict[tuple[str, str], dict[str, float]] = {}
+            for row in result:
+                region = row["metric"].get("region", "")
+                tier = row["metric"].get("tier", "")
+                user_id = row["metric"].get("user_id", "")
+                if region and tier and user_id:
+                    groups.setdefault((region, tier), {})[user_id] = float(row["value"][1])
+            out: dict[str, dict[str, tuple[str, float]]] = {}
+            for (region, tier), users in groups.items():
+                total = sum(users.values())
+                if total == 0:
+                    continue
+                top = max(users, key=lambda u: users[u])
+                out.setdefault(region, {})[tier] = (top, users[top] / total)
+            return out
+        return _synthetic_top_user_share()
+
+
 def _synthetic_request_rate() -> list[dict[str, Any]]:
     ts = time.time()
     return [
@@ -100,6 +126,14 @@ def _synthetic_request_rate_range(window_minutes: int) -> dict[str, list[float]]
                 series.append(round(base * multiplier * random.uniform(0.9, 1.1), 2))
             result[f"{r}/{t}"] = series
     return result
+
+
+def _synthetic_top_user_share() -> dict[str, dict[str, tuple[str, float]]]:
+    # Normal distribution — no noisy neighbor by default (shares well below 30%)
+    return {
+        r: {t: (f"u_{r}_{t}_001", random.uniform(0.05, 0.15)) for t in TIERS}
+        for r in REGIONS
+    }
 
 
 def _synthetic_rejection_rate() -> list[dict[str, Any]]:
