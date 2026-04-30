@@ -1,8 +1,11 @@
 import asyncio
 import time
 
+from decider import Decider
+from decision_log import DecisionLog
 from feature_extractor import extract
 from metrics_client import PrometheusClient
+from policy_writer import PolicyWriter
 from predictor import EWMAPredictor
 
 TICK_INTERVAL_SECONDS = 10
@@ -11,11 +14,12 @@ TICK_INTERVAL_SECONDS = 10
 async def agent_loop() -> None:
     client = PrometheusClient()
     predictor = EWMAPredictor(alpha=0.3)
+    writer = PolicyWriter(log=DecisionLog())
+    decider = Decider(writer=writer)
 
     history = client.request_rate_range(window_minutes=30)
     predictor.warm_up(history)
-    total_points = sum(len(v) for v in history.values())
-    print(f"  EWMA warmed up from {total_points} data points")
+    print(f"  EWMA warmed up from {sum(len(v) for v in history.values())} data points")
 
     tick = 0
     while True:
@@ -25,6 +29,8 @@ async def agent_loop() -> None:
 
         features = extract(client)
         predictions = predictor.update(features)
+        top_users = client.top_user_share()
+        decider.decide(features, predictions, top_users)
 
         for region, tiers in predictions.items():
             for tier, pred in tiers.items():
