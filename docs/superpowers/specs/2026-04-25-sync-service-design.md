@@ -5,7 +5,7 @@
 **Owner:** Yashashav
 **Component:** Distributed counter store + cross-region sync service (`gdrl/sync`)
 **Date:** 2026-04-25
-**Status:** Approved (brainstorm), pending user review
+**Status:** Approved (brainstorm). Amended 2026-04-28 to track merged gateway behavior — see Constitution Appendix C, Amendment 1. Sections §4, §5, §6, §10, §11, §14 carry the changes.
 
 ---
 
@@ -33,46 +33,42 @@ Build the cross-region sync layer for a 3-region rate limiter. Each region has i
 One Python sync service process per region. Three identical instances (`sync-us`, `sync-eu`, `sync-asia`). Each owns its region's Redis, talks pub/sub to the other two.
 
 ```
-┌──────────── REGION us ────────────┐    ┌──────────── REGION eu ────────────┐    ┌──────── asia ────────┐
-│                                   │    │                                   │    │                      │
-│  gateway-us (Go) ─PUBLISH dirty─▶ │    │  gateway-eu                       │    │  gateway-asia        │
-│         │                         │    │                                   │    │                      │
-│         ▼ INCR rl:local:us:...    │    │                                   │    │                      │
-│  ┌─────────────┐                  │    │  ┌─────────────┐                  │    │  ┌─────────────┐     │
-│  │  redis-us   │◀─SUB dirty:us──┐ │    │  │  redis-eu   │                  │    │  │ redis-asia  │     │
-│  │  :6379      │                │ │    │  │  :6380      │                  │    │  │  :6381      │     │
-│  └─────────────┘                │ │    │  └─────────────┘                  │    │  └─────────────┘     │
-│         ▲                       │ │    │                                   │    │                      │
-│         │ HSET rl:global        │ │    │                                   │    │                      │
-│         │                       ▼ │    │                                   │    │                      │
-│  ┌─────────────────────────────┐ │    │  ┌─────────────────────────────┐   │    │  ┌──────────────┐    │
-│  │     sync-us  (Python)       │ │    │  │     sync-eu                 │   │    │  │  sync-asia   │    │
-│  │  asyncio orchestrator       │ │◀──▶│  │                             │◀─▶│    │  │              │    │
-│  │  ── coalescer (every Nms)   │ │    │  │                             │   │    │  │              │    │
-│  │  ── reconciler (every 30s)  │ │    │  │                             │   │    │  │              │    │
-│  │  ── /admin (FastAPI)        │ │    │  │                             │   │    │  │              │    │
-│  └─────────────────────────────┘ │    │  └─────────────────────────────┘   │    │  └──────────────┘    │
-│         │                         │    │                                   │    │                      │
-└─────────┼─────────────────────────┘    └───────────────────────────────────┘    └──────────────────────┘
-          │
-          │  PUBLISH sync:deltas (cross-region, all 3 Redis subscribed)
-          ▼
-   ┌──────────────────────────────────────────────────────────────────────┐
-   │  Cross-region pub/sub mesh                                           │
-   │  Each sync-X publishes to its OWN local Redis sync:deltas channel    │
-   │  Each sync-X subscribes to ALL 3 Redis sync:deltas channels          │
-   └──────────────────────────────────────────────────────────────────────┘
+┌─────────────────── REGION us ───────────────────┐  ┌─── REGION eu ──┐  ┌─── REGION asia ──┐
+│                                                  │  │                │  │                  │
+│  gateway-us (Go)                                 │  │  gateway-eu    │  │  gateway-asia    │
+│   ├─ INCR rl:local:us:{tier}:{user}              │  │  (mirror)      │  │  (mirror)        │
+│   ├─ HIncrBy rl:global:{tier}:{user}:{w} us 1    │  │                │  │                  │
+│   ├─ HGetAll rl:global:{tier}:{user}:{w}  ◀ sum  │  │                │  │                  │
+│   └─ PUBLISH rl:sync:counter {Contract-2 JSON}   │  │                │  │                  │
+│         │                                         │  │                │  │                  │
+│         ▼                                         │  │                │  │                  │
+│  ┌─────────────┐                                  │  │  ┌──────────┐  │  │  ┌────────────┐  │
+│  │  redis-us   │                                  │  │  │ redis-eu │  │  │  │ redis-asia │  │
+│  │  :6379      │                                  │  │  │  :6380   │  │  │  │  :6381     │  │
+│  └─────┬───────┘                                  │  │  └────┬─────┘  │  │  └─────┬──────┘  │
+│        │ SUB rl:sync:counter (local + 2 peers)    │  │       │        │  │        │         │
+│        ▼                                          │  │       │        │  │        │         │
+│  ┌────────────────────────────────────────────┐   │  │  ┌────▼─────┐  │  │  ┌─────▼──────┐  │
+│  │   sync-us  (Python)                        │   │  │  │ sync-eu  │  │  │  │ sync-asia  │  │
+│  │   ── relay (subscribe → max-merge peer)    │◀──┼──┼──│          │──┼──┼──│            │  │
+│  │   ── reconciler (30s broadcast own slots)  │   │  │  │          │  │  │  │            │  │
+│  │   ── /admin (FastAPI)                      │   │  │  │          │  │  │  │            │  │
+│  │   ── failover buffer + watchdog            │   │  │  │          │  │  │  │            │  │
+│  └────────────────────────────────────────────┘   │  │  └──────────┘  │  │  └────────────┘  │
+│         │ HSET rl:global:..:{w} {peer} {value}    │  │                │  │                  │
+│         ▼ (only peer slots; never own)            │  │                │  │                  │
+│      back to redis-us                             │  │                │  │                  │
+└──────────────────────────────────────────────────┘  └────────────────┘  └──────────────────┘
 ```
 
 ### Process boundary
 - One Python container per region. Identical image, differs by `--region`, `--local-redis-url`, `--peer-redis-urls`.
 - Stateless across restarts. All persistent state in Redis. Restart = catch up via reconcile.
-- Single asyncio event loop per process. Tasks: local-subscriber, peer-subscribers (×2), coalescer-publisher, reconciler, FastAPI server, watchdog.
+- Single asyncio event loop per process. Tasks: peer-subscribers (×3, including local), reconciler, FastAPI server, watchdog.
 
 ### Network topology
-- Each sync subscribes to its **local** Redis for `dirty:{region}` (gateway signals).
-- Each sync subscribes to **all three** Redis instances for `sync:deltas` (peer state). 3 connections per sync = 9 cross-region subscribes total in the cluster.
-- Each sync publishes only to its **local** Redis `sync:deltas` channel.
+- Each sync subscribes to **all three** Redis instances on `rl:sync:counter` (3 connections per sync = 9 cross-region subscribes total). Local-Redis subscription is included so partition simulation can drop self-origin slots if needed.
+- Each sync publishes only to its **local** Redis `rl:sync:counter` channel — and only `kind=reconcile` envelopes. Gateway publishes `kind=counter` (Contract 2) on its local Redis directly.
 - Cross-region delivery happens via subscribers reaching peer Redises directly. No Redis cluster mode. No Redis-side replication.
 
 ### Why this shape
@@ -80,8 +76,8 @@ One Python sync service process per region. Three identical instances (`sync-us`
 - Subscribing across regions (vs Redis-side replication) keeps Redis stock vanilla and makes partition simulation trivial (subscriber filters by `from_region`).
 - All state in Redis means no in-process cache to invalidate on restart. Reconcile is the universal recovery mechanism.
 
-### Sync role: observability + agent input only (NOT enforcement)
-Gateway enforces purely on local Redis token bucket (fast path). Sync replicates monotonic per-region request-allowed counts to `rl:global:*`. Agent reads global to detect cross-region noisy neighbors and writes overrides. Gateway never reads global view. Clean G-Counter semantics (always monotonic), no decrement bug.
+### Sync role: cross-region max-merge relay + observability
+Gateway enforces locally. It writes its own region's slot in `rl:global:{tier}:{user}:{w}` and reads the local hash for global aggregate enforcement — both are local Redis I/O. Sync makes the gateway's local read globally-coherent by max-merging peer slots (received over `rl:sync:counter` from peer Redises) into the local hash. Sync does NOT write its own region's slot; the gateway already did that. Single-writer-per-slot is preserved by construction. Agent consumes the same hash via Prometheus metrics.
 
 ---
 
@@ -90,13 +86,14 @@ Gateway enforces purely on local Redis token bucket (fast path). Sync replicates
 **G-Counter, state-based, max-merge per slot.**
 
 ### Data shape
-- Per (tier, user_id), each region maintains a monotonic count of requests allowed locally.
-- Global state for that key = a vector of per-region counts, stored as a Redis hash:
+- Per (tier, user_id, window_id), each region maintains a monotonic-within-window count of requests allowed locally.
+- Global state = a vector of per-region counts, stored as a Redis hash, segmented by `window_id` (= `floor(unix_ts/60)`):
   ```
-  HSET rl:global:{tier}:{user_id} us 47 eu 42 asia 1
+  HSET rl:global:free:u_123:29620586 us 47 eu 42 asia 1
   ```
-- Global value = sum of all slots.
+- Global value = sum of all slots in that window.
 - Merge rule: `slot[r] = max(local_slot[r], incoming_slot[r])` for each region r. Idempotent, commutative, associative.
+- Reset semantics: rollover happens by writing a new key (next `window_id`); the old key TTLs out. No in-place reset.
 
 ### Why G-Counter
 - Conflict-free: only one writer per slot (each region writes its own slot). Impossible to disagree.
@@ -105,9 +102,9 @@ Gateway enforces purely on local Redis token bucket (fast path). Sync replicates
 - Tolerates clock skew (no timestamps for ordering).
 
 ### Hard invariant
-**Local slot counts only increase.** Never decrement. Token-bucket "refill" semantics are gateway-side (Lua script handles via TTL); sync-replicated counter is monotonic request-allowed-count, never tokens-remaining.
+**Within a window, local slot counts only increase.** Never decrement, never in-place reset. Window rollover (next `window_id` → new key) is the only path back to zero, and it goes through Redis TTL on the old key, not via mutation. Token-bucket "refill" semantics are gateway-private state on separate keys, not replicated. Sync-replicated counter is the request-allowed-count returned by the gateway's HIncrBy — never tokens-remaining.
 
-If this invariant is violated, max-merge will resurrect old values across regions. Enforced at the `RegionalCounter` API: only `increment()` is exposed, no `set()` or `decrement()`.
+If this invariant is violated, max-merge will resurrect old values across regions. Enforced at the `RegionalCounter` API: `apply_remote_slot` rejects writes to own region's slot and rejects values lower than the current slot value (Lua-atomic).
 
 ### Reference implementations
 - `python3-crdt` (anshulahuja98, MIT, ~150 LOC G-Counter class) — lifting the data-structure code with attribution.
@@ -116,41 +113,63 @@ If this invariant is violated, max-merge will resurrect old values across region
 
 ---
 
-## 4. Wire envelope (cross-region channel `sync:deltas`)
+## 4. Wire envelope (cross-region channel `rl:sync:counter`)
+
+Two envelope kinds share the same channel.
+
+### 4a. `kind=counter` — gateway-emitted, one per allowed request (Contract 2 verbatim)
 
 ```json
 {
-  "v": 1,
-  "kind": "delta" | "reconcile",
-  "origin": "us",
-  "ts_ms": 1714060800123,
+  "tier":      "free",
+  "user_id":   "u_123",
+  "window_id": 29620586,
+  "region":    "us",
+  "value":     47,
+  "ts_ms":     1714060800123
+}
+```
+
+- Emitted by gateway after a successful `HIncrBy rl:global:{tier}:{user_id}:{window_id} {region} 1`.
+- `value` is the absolute slot count returned by `HIncrBy` (not a delta).
+- Receivers (the other two regions' sync services) max-merge `value` into their own local `rl:global:{tier}:{user_id}:{window_id}` hash on field `region`.
+- `ts_ms` populates `rl_sync_lag_seconds`.
+- This shape is fixed by Contract 2; sync does not get to change it.
+
+### 4b. `kind=reconcile` — sync-emitted, every 30s, chunked
+
+Distinguished from `kind=counter` by the presence of a top-level `"kind"` field. Counter envelopes have no `"kind"` field (Contract 2 lock).
+
+```json
+{
+  "kind":     "reconcile",
+  "v":        1,
+  "origin":   "us",
+  "ts_ms":    1714060800123,
+  "window_id": 29620586,
   "slots": {
-    "free:u_123": {"us": 47},
-    "premium:u_456": {"us": 1203}
+    "free:u_123":      47,
+    "premium:u_456":   1203
   }
 }
 ```
 
-- `slots` keyed by `"{tier}:{user_id}"`. Value is origin region's monotonic slot count for that key. Only origin's slot included; receivers max-merge into their own hash.
-- `kind=delta` — coalesced batch from dirty set (every N ms).
-- `kind=reconcile` — full local-namespace dump, chunked at 1000 keys/message (every 30 s).
-- `ts_ms` used for `rl_sync_lag_seconds` metric. Not used for ordering (max-merge is order-independent).
+- One reconcile message covers one window for the origin region only. `slots` map values are the origin's own slot count for that (tier, user_id) at that window.
+- Chunked at 1000 entries per message.
+- Receivers max-merge each entry into local `rl:global:{tier}:{user_id}:{window_id}` field `origin`. Idempotent — replay-safe.
 
 ### Bandwidth math
-Steady state, 500 ms interval, 100 active users/region:
-- Per tick ~100 dirty entries × ~50 bytes JSON = ~5 KB envelope.
-- 2 publish/sec × 5 KB = 10 KB/sec per region.
-- Cross-region 30 KB/sec aggregate. Peer subscribers ingest 60 KB/sec per sync. Trivial.
+Steady state, 1k req/s/region, ~100 active users/region:
+- Counter envelopes: 1k publish/s × ~120 bytes = ~120 KB/sec per region. Cross-region ingress per sync: 240 KB/sec from two peers. Comfortably below pub/sub 32 MB output buffer cap.
+- Reconcile every 30 s, 10 k keys × ~30 bytes packed = 300 KB/window chunked into 10 × 30 KB messages. ~0.3 msg/sec aggregate. Trivial.
 
-Reconcile every 30 s, 10 k keys × 50 bytes = 500 KB chunked into 10 messages of 50 KB. ~1 msg/sec aggregate. Trivial.
-
-Even at 5 k req/s sustained load, dirty-set coalescing keeps publish rate at 2 Hz. Pub/sub output buffer never near 32 MB cap.
+At 5k req/s sustained the counter-channel rate scales linearly. If buffer pressure shows up, the back-pressure response is Contract 2 — gateway can sample (e.g. publish only every Nth allowed request) — not sync coalescing. Sync remains a stateless relay.
 
 ---
 
 ## 5. Components
 
-8 modules. Each ≤ 150 LOC. Single-purpose, isolated, independently testable.
+8 modules. Each ≤ 150 LOC. Single-purpose, isolated, independently testable. Coalescer is gone (§4 explains: gateway publishes one envelope per allowed request, so sync has no batching to do); replaced by `relay.py`.
 
 ### `sync/crdt.py` — G-Counter primitive (~120 LOC)
 Pure data structure. No I/O. Lifted from `python3-crdt` (MIT, attribution in header).
@@ -166,62 +185,74 @@ class GCounter:
 ```
 
 ### `sync/counter.py` — Redis-backed regional counter (~100 LOC)
-Owns Contract 2 key schema. PDF-named methods.
+Owns Contract 2 key schema. Sync writes peer slots only; gateway writes own slot (Contract 2).
 ```python
 class RegionalCounter:
     def __init__(self, region: str, redis: Redis): ...
-    async def increment(self, tier: str, user_id: str) -> int
-        # INCR rl:local:{region}:{tier}:{user_id}, EX window+60
-    async def get_local(self, tier: str, user_id: str) -> int
-        # GET rl:local:{region}:{tier}:{user_id}
-    async def get_global(self, tier: str, user_id: str) -> dict[str,int]
-        # HGETALL rl:global:{tier}:{user_id}
-    async def apply_remote_slot(self, tier, user_id, region, count) -> None
-        # Atomic max-merge via Lua: only writes if incoming > current
-    async def scan_dirty_local(self) -> AsyncIterator[tuple[str,str,int]]
-        # SCAN MATCH rl:local:{self.region}:*
+    async def get_global(self, tier: str, user_id: str, window_id: int) -> dict[str,int]
+        # HGETALL rl:global:{tier}:{user_id}:{window_id}
+    async def get_own_slot(self, tier: str, user_id: str, window_id: int) -> int
+        # HGET ... region — used by reconciler to read what gateway last wrote
+    async def apply_remote_slot(self, tier, user_id, window_id, peer_region, value) -> bool
+        # Atomic max-merge via Lua. Returns True if value was applied.
+        # MUST refuse if peer_region == self.region (constitution III §6).
+    async def scan_window_keys(self, window_id: int) -> AsyncIterator[tuple[str,str]]
+        # SCAN MATCH rl:global:*:*:{window_id} → yield (tier, user_id)
 ```
-Atomic max-merge Lua:
+Atomic max-merge Lua (`max_merge.lua`):
 ```lua
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if (not cur) or (tonumber(cur) < tonumber(ARGV[2])) then
   redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('EXPIRE', KEYS[1], 300)
   return 1
 end
 return 0
 ```
+TTL refresh on every merge keeps the window key alive across the (window + grace) period.
 
 ### `sync/transport.py` — Pub/sub publish + subscribe (~100 LOC)
-Wraps redis-py async PubSub. Reconnection, health checks, message envelope.
+Wraps redis-py async PubSub. Reconnection, health checks. Channel is `rl:sync:counter` for both kinds.
 ```python
 class Transport:
     def __init__(self, local_redis, peer_redises: dict[str,Redis]): ...
-    async def publish_local(self, channel: str, payload: bytes) -> None
-    async def subscribe_local(self, channel: str) -> AsyncIterator[bytes]
-    async def subscribe_peers(self, channel: str) -> AsyncIterator[tuple[str,bytes]]
+    async def publish_local(self, payload: bytes) -> None        # for reconcile envelopes
+    async def subscribe_peers(self) -> AsyncIterator[tuple[str,bytes]]
+        # yields (origin_region, raw_envelope) from all 3 Redises (incl. local — relay drops self-origin counter envelopes)
 ```
-Settings: `health_check_interval=15`, `socket_keepalive=True`. Auto-reconnect with exponential backoff (1s → 2s → 4s → max 30s). Re-subscribe on reconnect (subscriptions are per-connection, not server-side).
+Settings: `health_check_interval=15`, `socket_keepalive=True`. Auto-reconnect with exponential backoff (1s → 2s → 4s → max 30s). Re-subscribe on reconnect.
 
-### `sync/coalescer.py` — Dirty-set + periodic broadcast (~120 LOC)
+### `sync/relay.py` — Receive → parse → max-merge (~80 LOC)
+The hot loop on the sync side. Replaces the old `coalescer.py`.
 ```python
-class Coalescer:
-    def __init__(self, region, counter, transport, interval_ms: int): ...
-    def mark_dirty(self, tier: str, user_id: str) -> None
-    async def run(self) -> None  # every interval_ms
-    def set_interval(self, ms: int) -> None  # hot-reload from /admin/config
+class Relay:
+    def __init__(self, region, counter, transport, partition_table, metrics, buffer): ...
+    async def run(self) -> None
+        # async for (origin, raw) in transport.subscribe_peers():
+        #     env = parse_envelope(raw)
+        #     if partition_table.blocks(origin, self.region): drop, metric, continue
+        #     if env.kind == "counter":
+        #         if env.region == self.region: continue  # gateway already wrote own slot locally
+        #         await counter.apply_remote_slot(env.tier, env.user_id, env.window_id, env.region, env.value)
+        #     elif env.kind == "reconcile":
+        #         for (tier, user_id), value in env.slots.items():
+        #             await counter.apply_remote_slot(tier, user_id, env.window_id, env.origin, value)
+        #     metrics.observe_lag(now - env.ts_ms, from=origin, to=self.region)
 ```
-Dirty set = `set[tuple[str,str]]`. Bounded at 50 k (drop oldest on overflow, log warning, count overflow metric, reconciler covers gaps).
+Stateless (no dirty set, no batching). Backpressure handling: if `apply_remote_slot` raises (local Redis dead), envelope goes to `FailoverBuffer`; relay continues consuming so subscriber doesn't fall behind.
 
-### `sync/reconciler.py` — 30s full-state max-merge (~80 LOC)
+### `sync/reconciler.py` — 30s full-window max-merge broadcast (~100 LOC)
 ```python
 class Reconciler:
     def __init__(self, region, counter, transport, period_s: int = 30): ...
     async def run(self) -> None
     async def reconcile_once(self) -> ReconcileStats
-        # SCAN local rl:local:{region}:*, chunk into 1000-key messages,
-        # publish on sync:deltas with envelope kind=reconcile
+        # for window_id in {current, current-1}:
+        #   scan rl:global:*:*:{window_id}
+        #   for each key, HGET own slot → accumulate (tier, user_id, value)
+        #   chunk 1000 entries → build envelope kind=reconcile, publish on rl:sync:counter
 ```
-Runs immediately on startup (cold-start catch-up), then every 30 s.
+Runs immediately on startup (cold-start catch-up), then every 30s. Two windows scanned because messages near a minute boundary may have been mis-bucketed by skewed clocks; the older window is cheap insurance.
 
 ### `sync/buffer.py` — In-memory degraded-mode buffer (~60 LOC)
 ```python
@@ -239,105 +270,103 @@ GET  /health                          → 200 if all subscribers alive
 GET  /admin/state?user_id=X           → per-region counts + drift + staleness
 POST /admin/partition {from,to}       → block messages (asymmetric supported)
 POST /admin/heal {from?,to?}          → clear partition rules
-POST /admin/config {sync_interval_ms} → hot-reload coalescer interval
+POST /admin/config {reconcile_period_s} → hot-reload reconcile period
 GET  /metrics                         → Prometheus scrape
 ```
 
 ### `sync/service.py` — Orchestrator + entrypoint (~100 LOC)
 asyncio main. Wires everything. CLI flags.
 ```python
-async def main(region, local_redis_url, peer_redis_urls, sync_interval_ms): ...
+async def main(region, local_redis_url, peer_redis_urls, reconcile_period_s): ...
 ```
 Tasks under one `asyncio.gather` with cancellation on signal.
 
 ### Module dependency graph
 ```
-service.py ─┬─▶ coalescer.py ─┬─▶ counter.py ─▶ crdt.py
-            │                 ├─▶ transport.py
-            │                 └─▶ buffer.py
+service.py ─┬─▶ relay.py ──┬─▶ counter.py ─▶ crdt.py
+            │              ├─▶ transport.py
+            │              ├─▶ buffer.py
+            │              └─▶ partition_table.py
             ├─▶ reconciler.py ─▶ counter.py
             │                  └─▶ transport.py
-            └─▶ admin.py ─▶ (refs to coalescer, counter, transport)
+            └─▶ admin.py ─▶ (refs to relay, counter, transport, partition_table)
 ```
-No circular deps. crdt.py is leaf, testable in isolation.
+No circular deps. crdt.py is leaf, testable in isolation. partition_table is a small (~30 LOC) shared module holding the `set[(from, to)]` partition rules; relay reads, admin writes.
 
 ### Total LOC
-~780 LOC application + ~200 LOC tests + ~50 LOC `gateway-stub` dev harness. Within budget for 4-5 effective build days.
+~740 LOC application + ~250 LOC tests + ~60 LOC `gateway-stub` dev harness. Net −40 LOC vs. pre-amendment design (coalescer −120, relay +80). Within budget for 4-5 effective build days.
 
 ---
 
 ## 6. Data flow
 
-### Flow 1 — Hot path: gateway request → counter increment
+### Flow 1 — Hot path: gateway request → local + global update
+All steps below execute against `redis-us` (local). No cross-region call.
 ```
 1. Client → POST /check {user_id:u_123, tier:free, region:us, endpoint:/api/v1/foo}
-2. gateway-us runs Lua: token bucket check → allow.
-3. gateway-us: INCR rl:local:us:free:u_123  EX 120          (Nikhil)
-4. gateway-us: PUBLISH dirty:us "free:u_123"                (Nikhil, Day-0 contract)
-5. gateway-us → client: {allowed:true, remaining:9, ...}
+2. gateway-us Lua: token bucket check on rl:local:us:free:u_123 → allow.
+3. gateway-us: INCR rl:local:us:free:u_123  EX (window+60)
+4. gateway-us: HIncrBy rl:global:free:u_123:{window_id} us 1  → newSlot
+5. gateway-us: HGetAll rl:global:free:u_123:{window_id}  → sum, compare to GlobalLimit
+6. gateway-us: Publish rl:sync:counter {tier, user_id, window_id, region:us, value:newSlot, ts_ms}
+7. gateway-us → client: {allowed, remaining, limit, retry_after_ms, policy_id}
 ```
-Sync coupling adds 1 PUBLISH (~0.1 ms). Fire-and-forget; doesn't block response.
+Sync coupling adds one local Redis Publish (~0.1 ms). Fire-and-forget.
 
-### Flow 2 — Sync path: dirty signal → cross-region broadcast
+### Flow 2 — Sync relay: peer envelope → local hash merge
 ```
-1. sync-us local-subscriber receives "free:u_123" on dirty:us
-2. coalescer.mark_dirty("free", "u_123") → adds to in-memory set
-3. Every sync_interval_ms (default 500), coalescer tick:
-   a. drain dirty set
-   b. for each: count = await counter.get_local(tier, user_id)
-   c. build envelope kind=delta with slots
-   d. transport.publish_local("sync:deltas", envelope)
-   e. clear dirty set
+1. sync-us subscribes to rl:sync:counter on redis-us, redis-eu, redis-asia.
+2. Envelope arrives from redis-eu (origin=eu).
+3. Relay: partition_table.blocks(eu, us)? if yes → drop, metric, continue.
+4. Relay: env.region == self.region? if yes → drop (counter envelope from own gateway,
+   redundant; sync never writes own slot). For reconcile envelopes, env.origin == self
+   is similarly skipped.
+5. counter.apply_remote_slot(tier, user_id, window_id, peer_region=eu, value)
+   → Lua atomically HSETs the slot if value > current. EXPIRE refreshed.
+6. metrics: rl_sync_messages_total{kind=counter, origin=eu, dest=us}.inc();
+            rl_sync_lag_seconds{from=eu, to=us}.observe(now_ms - env.ts_ms).
 ```
+Stateless. No batching. One pub/sub message → one max-merge.
 
-### Flow 3 — Sync path: peer broadcast → local hash merge
-```
-1. sync-eu peer-subscriber receives envelope from redis-us sync:deltas
-2. parse → check partition table (drop if (origin, self) blocked)
-3. record lag: rl_sync_lag_seconds.observe(now_ms - envelope.ts_ms)
-4. for each (key, slot_dict) in envelope.slots:
-     for region, count in slot_dict.items():
-       await counter.apply_remote_slot(tier, user_id, region, count)
-5. metric: rl_sync_messages_total{kind=delta, origin=us}.inc()
-```
-
-### Flow 4 — Reconcile: 30 s full-state catch-up
+### Flow 3 — Reconcile: 30 s broadcast of own region's slots
 ```
 Every 30 s in each sync-X:
 1. reconciler.reconcile_once():
-   a. SCAN MATCH rl:local:{region}:*
-   b. for each key, parse → (tier, user_id), GET count
-   c. accumulate into chunks of 1000 entries
-   d. for each chunk: build envelope kind=reconcile, publish
-2. Also write own slots into local rl:global:* (covers cold-start)
-3. Receivers process reconcile envelopes identically to delta.
-   Max-merge is idempotent → safe to replay.
-4. metric: rl_reconcile_duration_seconds.observe(elapsed)
+   a. for window_id in {now/60, now/60 - 1}:
+        SCAN MATCH rl:global:*:*:{window_id} on local Redis
+        for each key: parse (tier, user_id); HGET field={region} → value
+        accumulate into chunks of 1000 entries
+   b. for each chunk: publish kind=reconcile envelope on local rl:sync:counter
+2. Receivers (Flow 2 above) process reconcile envelopes via max-merge — idempotent.
+3. metric: rl_reconcile_duration_seconds.observe(elapsed); keys_processed counter.
 ```
+Note: sync does NOT write its own slot anywhere in this flow. It only publishes what the gateway already HIncrBy'd, so peer regions can max-merge.
 
-### Flow 5 — Partition simulation
+### Flow 4 — Partition simulation
 ```
 Operator: POST /admin/partition {"from":"us","to":"eu"}
-1. admin handler: partition_set.add(("us","eu"))
-2. peer-subscriber on sync-eu, receiving envelope where origin=us:
-     if (origin, self.region) in partition_set: drop, increment metric
-3. After 60s: POST /admin/heal
-4. partition_set.clear()
-5. Next reconcile (≤30s) → drift converges via max-merge
+1. admin handler: partition_table.add(("us","eu"))
+2. relay on sync-eu receives envelope from redis-us with origin=us:
+     partition_table.blocks(us, eu) → True → drop, increment rl_messages_dropped_total.
+3. After Nseconds: POST /admin/heal {"from":"us","to":"eu"}
+4. partition_table.remove(("us","eu"))
+5. Next reconcile (≤30s) on sync-us → broadcasts current window slots →
+   sync-eu max-merges → drift collapses.
 ```
-Asymmetric drops supported.
+Asymmetric drops supported (partition us→eu without affecting eu→us).
 
-### Flow 6 — Degraded mode: local Redis dies
+### Flow 5 — Degraded mode: local Redis dies
 ```
-1. counter.get_local raises ConnectionError
-2. coalescer pushes (tier, user_id) into FailoverBuffer kind=dirty
-3. coalescer logs, increments rl_sync_buffer_size{kind=dirty}
-4. Transport.publish_local fails → buffer push for kind=delta
-5. background watchdog (1s tick) PINGs Redis
-6. on success: drain buffer FIFO, retry each entry
-7. metric returns to 0
+1. counter.apply_remote_slot raises ConnectionError.
+2. relay pushes (tier, user_id, window_id, peer_region, value) into FailoverBuffer
+   tagged kind=relay_apply.
+3. relay logs, increments rl_sync_buffer_size{kind=relay_apply}.
+4. transport.publish_local (reconcile) fails → buffer push for kind=reconcile_publish.
+5. watchdog (1s tick) PINGs local Redis.
+6. on success: drain FIFO, retry each entry. apply_remote_slot is idempotent.
+7. /health returns 503 while local Redis is down. Returns 200 once buffer is drained.
 ```
-Buffer cap 10 k. Overflow drops oldest with metric. Reconcile fills any actually-lost data.
+Buffer cap 10 k per kind. Overflow drops oldest with metric. Reconcile from peers fills any actually-lost data on recovery.
 
 ---
 
@@ -373,7 +402,7 @@ rl_sync_lag_seconds{from_region, to_region}   histogram
 ```
 rl_sync_messages_total{kind, origin_region, dest_region}    counter
 rl_messages_dropped_total{cause}                            counter
-rl_dirty_set_size{region}                                   gauge
+rl_relay_inflight{region}                                   gauge   (currently-processing peer envelopes)
 rl_sync_buffer_size{region, kind}                           gauge
 rl_sync_buffer_overflow_total{region, kind}                 counter
 rl_local_redis_up{region}                                   gauge (0/1)
@@ -383,7 +412,7 @@ rl_subscriber_disconnects_total{from_region}                counter
 rl_reconcile_duration_seconds                               histogram
 rl_reconcile_keys_processed{region}                         counter
 rl_partition_active{from_region, to_region}                 gauge (0/1)
-rl_coalescer_interval_ms{region}                            gauge
+rl_reconcile_period_s{region}                               gauge
 rl_global_counter_drift{tier, user_id}                      gauge (sampled top-100 active)
 ```
 
@@ -394,13 +423,13 @@ rl_global_counter_drift{tier, user_id}                      gauge (sampled top-1
 ## 9. Demo plan
 
 ### Standalone runtime: `make demo-sync`
-Single command brings up only what sync needs: 3 Redis + 3 sync containers + `gateway-stub` (50-LOC Python harness mimicking Nikhil's `PUBLISH dirty:{region}` calls). No teammate code required.
+Single command brings up only what sync needs: 3 Redis + 3 sync containers + `gateway-stub` (~60-LOC Python harness emitting Contract-2 envelopes on `rl:sync:counter` after a fake `HIncrBy` on local Redis — mimics Nikhil's gateway exactly at the sync surface). No teammate code required.
 
 When Nikhil's real gateway lands, swap `gateway-stub` for `gateway-us` in compose file. Zero sync code changes.
 
 ### Demo arc — 4 minutes of Yashashav-narrated content
 1. **Steady state (45s).** Grafana sync-lag p95 < 200ms across regions. Drift near zero.
-2. **Crank the knob (30s).** `POST /admin/config sync_interval_ms=5000` → lag spikes, drift widens. Crank back to 50ms → converges instantly. Demonstrates the latency-vs-accuracy tradeoff live.
+2. **Crank the knob (30s).** `POST /admin/config reconcile_period_s=300` → drift after a partition heals in ~5min instead of 30s. Crank back to 10s → next heal converges instantly. Demonstrates that reconcile is the correctness floor (counter pub/sub still flows in real time; reconcile only matters for messages dropped during partition).
 3. **Partition (75s).** `POST /admin/partition us eu` + spike traffic on US for 30s. Counts diverge visibly. `POST /admin/heal` → drift collapses < 5s. Show `GET /admin/state?user_id=X` from both syncs side-by-side.
 4. **Local Redis dies (45s).** `docker stop redis-eu`, run traffic, watch `rl_sync_buffer_size{region=eu}` climb. `docker start redis-eu` → buffer drains to 0.
 5. **Convergence test result (45s).** `pytest tests/chaos/test_convergence.py -v` → "Partition 60s, 1247 events, converged in 3.2s ✓"
@@ -411,7 +440,7 @@ When Nikhil's real gateway lands, swap `gateway-stub` for `gateway-us` in compos
   - `sync-cli inspect <user_id>` — calls all 3 `/admin/state`, side-by-side table
   - `sync-cli partition us eu`
   - `sync-cli heal`
-  - `sync-cli config us --interval 5000`
+  - `sync-cli config us --reconcile-period 300`
 
 ### Grafana panels (built by Prathamesh, spec'd by us)
 ```
@@ -420,10 +449,10 @@ Row 1 — Sync health
   B: rl_sync_messages_total rate by origin
   C: rl_local_redis_up + rl_peer_connection_up status grid
 
-Row 2 — Coalescing
-  D: rl_dirty_set_size per region
-  E: rl_coalescer_interval_ms (single stat — DEMO KNOB INDICATOR)
-  F: messages/sec on sync:deltas
+Row 2 — Throughput + knobs
+  D: messages/sec on rl:sync:counter by kind (counter vs reconcile)
+  E: rl_reconcile_period_s (single stat — DEMO KNOB INDICATOR)
+  F: rl_sync_messages_total rate (counter kind) — confirms gateway publish rate
 
 Row 3 — Drift / convergence
   G: rl_global_counter_drift top-N
@@ -441,14 +470,14 @@ Row 4 — Reconcile + buffer
 ### Layer 1 — Unit (no Redis, no network) — `tests/unit/`
 Pure logic, <1s per test, runs in CI on every PR.
 - `test_crdt.py` — increment/merge max-per-slot, idempotency (apply 100x same), commutativity
-- `test_envelope.py` — serialize roundtrip, version field, reject unknown version
+- `test_envelope.py` — both kinds (counter Contract-2 shape, reconcile shape) roundtrip; reject malformed; reject unknown version on reconcile
 - `test_buffer.py` — FIFO drain, overflow drops oldest, size metric
 - `test_partition_table.py` — direction blocking, asymmetric, heal clears
 
 ### Layer 2 — Integration (real Redis via testcontainers) — `tests/integration/`
-- `test_counter_redis.py` — TTL persistence, max-merge Lua atomic, no-decrement protection, scan filters region
-- `test_transport_pubsub.py` — publish/subscribe local, peer subscriber yields origin, reconnect resubscribes, health check detects dead connection (toxiproxy fixture)
-- `test_coalescer.py` — dirty signal triggers publish within interval, multiple signals same key coalesce to 1 publish, set_interval hot-reload
+- `test_counter_redis.py` — max-merge Lua atomic; idempotent replay; refuses to write own region's slot (constitution III §6); window-id scan returns only matching window; TTL refreshed on each merge
+- `test_transport_pubsub.py` — peer subscriber yields (origin, raw) from all 3 Redises; reconnect resubscribes; health check detects dead connection (toxiproxy fixture)
+- `test_relay.py` — counter envelope from peer applies; counter envelope where region == self drops; reconcile envelope applies all slots; partition rule blocks; lag metric observed; local-Redis-down path goes to buffer
 
 ### Layer 3 — End-to-end with full 3-region cluster — `tests/e2e/`
 Uses `docker-compose.sync-only.yml`.
@@ -490,20 +519,23 @@ Sync service ships to "done + tested + demo-rehearsed" by Day 7 even if other co
 
 ---
 
-## 11. Cross-team contract changes (Day 0 sign-off required)
+## 11. Cross-team contract status
 
-### Contract addendum 1 — Gateway dirty signal (Nikhil)
-After every successful Lua call (allow path), gateway publishes:
-```
-PUBLISH dirty:{region} "{tier}:{user_id}"
-```
-Payload is plain string `"{tier}:{user_id}"`. ~5 line Go change. Local Redis only.
+As of Amendment 1 (2026-04-28), the cross-team contracts are codified in `docs/contracts.md` and the sync service consumes them as-is. No new sign-off required.
 
-### Contract 2 reframe — Counter slot semantics (Nikhil)
-`rl:local:{region}:{tier}:{user_id}` is a monotonic request-allowed-count integer. Gateway INCRs on allow. Token-bucket internal state (tokens-remaining, last-refill-ts) lives under separate Redis keys owned by gateway and is NOT replicated.
+### Contract 2 — sync's read/write surface
+- **Reads from local Redis** on hot path of relay loop:
+  - Subscribes `rl:sync:counter` on all 3 Redis instances
+  - HGET on local `rl:global:{tier}:{user_id}:{window_id}` (reconciler scan)
+- **Writes to local Redis only**:
+  - HSET (via Lua max-merge) on `rl:global:{tier}:{user_id}:{window_id}` field={peer_region}
+  - PUBLISH `rl:sync:counter` (kind=reconcile envelopes only)
+- **Never writes**: own region's slot in `rl:global:*` (gateway exclusive); `rl:local:*` (gateway exclusive); `policy:*` / `override:*` (agent exclusive).
 
-### Out of scope for sync — Override replication (Atharv)
-`override:{user_id}` writes are NOT replicated by sync service. Agent must write to all 3 region Redises directly, or use a shared single-instance policy Redis. Decided by Atharv + Nikhil.
+### Out of scope for sync (unchanged)
+- `override:{user_id}` and `policy:*` replication. Atharv's agent writes directly to all 3 region Redises.
+- Token-bucket refill internals (gateway-private keys; not replicated).
+- Cross-region transport for anything other than counter slot replication.
 
 ---
 
@@ -522,9 +554,10 @@ sync/
   crdt.py
   counter.py
   transport.py
-  coalescer.py
+  relay.py
   reconciler.py
   buffer.py
+  partition_table.py
   admin.py
   service.py
   __main__.py
@@ -575,8 +608,8 @@ Most content already drafted in this spec — rephrase for prose.
 | Day | Deliverable |
 |---|---|
 | D1 | docker-compose 3 Redis up. `sync/` Python project initialized. Standalone `make demo-sync` skeleton (just brings up containers). |
-| D2 | `RegionalCounter` complete with unit tests. `SyncService` stub. `crdt.py` complete with tests. `gateway-stub` working. |
-| D3 | `transport.py` complete. `coalescer.py` complete. `publish_delta` + `subscribe` working between sync-us and sync-eu. End-to-end propagation test green. `docs/sync-design.md` v1. |
+| D2 | `RegionalCounter` complete with unit tests (incl. own-slot-write refusal). `crdt.py` complete with tests. `gateway-stub` working — emits Contract-2 envelopes on `rl:sync:counter`. |
+| D3 | `transport.py` complete. `relay.py` complete. End-to-end counter envelope propagation test green between sync-us and sync-eu via stub. `docs/sync-design.md` v1. |
 | D4 | `reconciler.py` complete. Wired into gateway flow (via stub). `rl_sync_lag_seconds` metric live. All Layer 2 tests green. |
 | D5 | `admin.py` complete. `/admin/partition` + `/admin/heal` working. Partition writeup section. Layer 3 e2e tests green. |
 | D6 | Team integration day. Swap `gateway-stub` for Nikhil's real gateway. Verify all flows still work. |

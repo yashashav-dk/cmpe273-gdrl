@@ -6,6 +6,7 @@
 **Owner:** Yashashav
 **Ratified:** 2026-04-26
 **Status:** Living document. Amendments require explicit reason + diff.
+**Last amended:** 2026-04-28 (Amendment 1 — see Appendix C).
 
 This document codifies the non-negotiable principles, invariants, and boundaries of the sync service. When in doubt during implementation, code review, or scope debate, this is the tiebreaker. Read it on day 1. Re-read it every Monday.
 
@@ -20,13 +21,13 @@ The sync service exists to make the AI traffic-shaping agent possible. Its sole 
 ## Article II — Core Principles
 
 ### §1. Local enforcement, eventual replication
-Gateways enforce on local Redis. Sync replicates eventually. Sync failure must never break a single request. If you find yourself making a sync call on the request hot path, you have made a mistake — back up.
+Gateways enforce on **local Redis only** — including the global view, which is a hash on local Redis populated by sync. Sync replicates peer slots eventually. Sync failure must never break a single request. **No cross-region network call on the request hot path, ever.** Reading the local-Redis `rl:global:*` hash is local I/O and permitted; that hash being slightly stale during a partition is the recoverable failure mode this design accepts.
 
 ### §2. AP, not CP
 We choose availability and partition tolerance over consistency. Under partition, regions continue serving locally and may over-allow. They never under-allow. Over-allow is a recoverable accuracy bug; under-allow is a customer-facing outage. We always pick the recoverable failure mode.
 
-### §3. Monotonic counters, forever
-Every replicated counter slot is monotonically non-decreasing. There is no decrement, no reset, no backfill, no manual override. This is the load-bearing invariant of the entire system. Violating it resurrects stale state across regions and silently corrupts every downstream metric. The `RegionalCounter` API does not expose `set` or `decrement` and never will. If a future requirement seems to need decrement, the answer is a new key, not a violated invariant.
+### §3. Monotonic counters within a window
+Within a `window_id`, every replicated slot is monotonically non-decreasing. There is no decrement, no reset, no backfill, no manual override. Window rollover (next minute → new key) is the only way a slot's value resets, and it does so by virtue of a new key, not by mutation of an existing one. This is the load-bearing invariant. Violating it resurrects stale state across regions and silently corrupts every downstream metric. The `RegionalCounter` API does not expose `set` or `decrement` and never will. If a future requirement seems to need decrement, the answer is a new key, not a violated invariant.
 
 ### §4. Idempotent everywhere
 Every operation that crosses a process or network boundary must be safe to replay. Max-merge is idempotent by construction; we lean on this hard. Apply the same delta a thousand times — state is identical to applying once. Drop a message — next reconcile recovers it. Receive duplicates — no harm. Idempotence is what lets us use unreliable transport (pub/sub) without blocking the hot path.
@@ -54,12 +55,12 @@ The following statements must remain true across the lifetime of this codebase. 
 
 1. **One sync process per region.** Three identical containers. No leader, no coordinator, no shared state outside Redis.
 2. **Sync subscribes to peer Redis instances directly.** No Redis cluster mode. No Redis-side replication. Stock vanilla Redis 7+.
-3. **Cross-region transport is Redis pub/sub on `sync:deltas`.** Coalesced, max-merge G-Counter envelopes. The 30-second full-state reconcile is the correctness mechanism, not a fallback.
-4. **The gateway → sync coupling is a single fire-and-forget `PUBLISH dirty:{region}` per allowed request.** Nothing more.
+3. **Cross-region transport is Redis pub/sub on `rl:sync:counter`.** JSON envelope per Contract 2. Two envelope kinds: `counter` (one-per-allowed-request, emitted by gateway) and `reconcile` (chunked full-window scan, emitted by sync every 30s). The reconcile pass is the correctness mechanism, not a fallback.
+4. **The gateway → sync coupling is a single fire-and-forget `PUBLISH rl:sync:counter` envelope per allowed request, after the gateway has HIncrBy'd its own slot in `rl:global:{tier}:{user_id}:{window_id}`.** Nothing more.
 5. **`rl:local:{region}:{tier}:{user_id}` is owned by the gateway as writer; sync reads only.**
-6. **`rl:global:{tier}:{user_id}` is owned by the sync service.** Each region writes only its own field. Max-merge on incoming.
+6. **`rl:global:{tier}:{user_id}:{window_id}` is a HASH with single-writer-per-slot.** The region's gateway is the only writer of that region's slot value, full stop. Sync max-merges peer slots received via pub/sub into the local hash; sync never writes its own region's slot. Window rollover via TTL — no in-place reset.
 7. **Policy and override replication are out of scope.** Sync replicates counters. Period.
-8. **No request blocks on a network call to another region.** Ever.
+8. **No request blocks on a network call to another region.** Ever. Local-Redis I/O on the hot path (including `HGetAll` on `rl:global:*:*`) is permitted because the hash has already been populated by sync's relay loop.
 
 ---
 
@@ -72,13 +73,13 @@ Counter replication. Coalesced broadcast. Periodic reconcile. Partition simulati
 Rate-limit enforcement. Token bucket logic. Sliding window logic. Policy storage. Override storage. Override replication. Traffic generation. Prometheus deployment. Grafana dashboard layout. AI prediction. AI decision-making. The HTTP `/check` API. Any code that runs in Nikhil's, Prathamesh's, or Atharv's process.
 
 ### Explicitly forbidden
-- Calling sync from the request hot path
-- Reading `rl:global:*` from the gateway for enforcement decisions
-- Decrementing any replicated slot
+- Cross-region network calls on the request hot path (calls to peer Redis, peer gateway, peer sync, etc.)
+- Reading peer Redis directly from the gateway (gateway only ever talks to its own local Redis)
+- Sync writing its own region's slot in `rl:global:*` (gateway's job; sync only max-merges peer slots)
+- Decrementing any replicated slot, or in-place resetting (windows roll over via TTL, not mutation)
 - Strong-consistency primitives (consensus, leader election, distributed locks) in the sync layer
 - Hidden state (file-backed caches, persistent in-memory state across restarts)
 - Silent error swallowing without metric emission
-- Cross-region calls in the request path
 
 When tempted to add something out-of-scope, propose it as a teammate's responsibility or as a future-work entry in the writeup. Do not absorb scope.
 
@@ -109,10 +110,10 @@ The four cross-team contracts (HTTP API, Redis schema, Prometheus metrics, polic
 5. Then code.
 
 ### Day-0 contracts that bind sync specifically
-- `dirty:{region}` channel format (Nikhil): payload is `"{tier}:{user_id}"` plain string.
-- `rl:local:{region}:{tier}:{user_id}` semantics: monotonic request-allowed-count integer.
-- `rl:global:{tier}:{user_id}` ownership: sync writes its region's slot, max-merges others.
-- `sync:deltas` envelope: versioned JSON, fields per §4 of the spec.
+- `rl:sync:counter` channel format (Nikhil emits, Yashashav consumes): JSON envelope per `docs/contracts.md` Contract 2 — `{tier, user_id, window_id, region, value, ts_ms}`. Fire-and-forget on local Redis after every allowed request.
+- `rl:local:{region}:{tier}:{user_id}` semantics: monotonic request-allowed-count integer with TTL = window + 60s.
+- `rl:global:{tier}:{user_id}:{window_id}` ownership: gateway HIncrBys own region's slot; sync max-merges peer slots received on `rl:sync:counter`. Window-id segmentation = unix_ts/60.
+- Sync's own reconcile envelope (sync emits, sync consumes): published on `rl:sync:counter` with envelope kind `reconcile` and a `slots` map (chunked at 1000 keys/message). See spec §4.
 
 ### Amending this constitution
 Constitutional amendments require:
@@ -130,16 +131,15 @@ These are the tuning values shipped on day 1. Change requires justification, not
 
 | Knob | Default | Floor | Ceiling | Owner |
 |---|---|---|---|---|
-| Coalescer interval | 500 ms | 50 ms | 5000 ms | Hot-reload via `/admin/config` |
-| Reconcile period | 30 s | 10 s | 300 s | Restart only |
+| Reconcile period | 30 s | 10 s | 300 s | Hot-reload via `/admin/config` |
 | Failover buffer cap | 10 000 entries per kind | 1 000 | 100 000 | Restart only |
 | Reconcile chunk size | 1 000 keys | 100 | 10 000 | Restart only |
 | Pub/sub health check interval | 15 s | 5 s | 60 s | Restart only |
 | Cross-region reconnect backoff | 1 s → 30 s exp | — | — | Hardcoded |
 | Local Redis TTL on counter keys | window + 60 s | — | — | Set by gateway |
-| Global hash TTL | 5 minutes | — | — | Set on each HSET |
+| Global hash TTL | 5 minutes (refreshed on each merge) | — | — | Set by sync's max-merge Lua |
 
-The coalescer interval floor of 50 ms is set deliberately. Sub-50 ms is a footgun (CPU burn for no real accuracy gain).
+There is no coalescing knob: the gateway already emits one envelope per allowed request, and sync relays one-for-one. The two surviving knobs are reconcile cadence (correctness floor under message loss) and buffer cap (bounded memory under local-Redis outage).
 
 ---
 
@@ -200,3 +200,24 @@ The sync service is small on purpose. Every "no" preserves that.
 ---
 
 *"In a partition, the region that keeps serving wins. In a calendar, the team that keeps shipping wins. In a codebase, the engineer who keeps deleting wins."*
+
+---
+
+## Appendix C — Amendment record
+
+### Amendment 1 — 2026-04-28: align with merged gateway implementation
+
+**Rationale.** Between ratification (2026-04-26) and now, two PRs landed: PR #5 merged Nikhil's gateway, and PR #8 (Prathamesh) updated `docs/contracts.md` to match the gateway's actual behavior. Two divergences from the original constitution were observed:
+
+1. The gateway publishes a JSON envelope on `rl:sync:counter`, not a plain `"{tier}:{user_id}"` string on `dirty:{region}`.
+2. The gateway itself `HIncrBy`s its own slot in `rl:global:{tier}:{user_id}:{window_id}` and does an `HGetAll` on the same hash to enforce a global limit synchronously on the request path.
+
+The original constitution stated sync owned `rl:global` writes and forbade gateway reads of it. After review, the gateway's behavior is **constitution-compatible at the invariant level**: the single-writer-per-slot rule still holds (only the region's own gateway ever writes its slot's value), and the gateway never makes a cross-region call (the `HGetAll` is on its own local Redis, populated by sync's relay loop). The original wording was needlessly prescriptive about *which process executes the local write*.
+
+This amendment loosens that prescription. Sync's mission is unchanged: replicate peer slots into the local hash so the gateway's local read sees a globally-coherent view. The gateway's role expands from "publish a dirty signal" to "publish the new slot value plus enforce against the local-but-globally-merged hash". Both are fast-path-safe (no cross-region network).
+
+**Articles affected.** II §1, II §3, III §3, III §4, III §6, IV (forbidden list), VI (Day-0 contracts), spec §4/§5/§6/§10/§11/§14 referenced separately.
+
+**Acknowledgments.** Yashashav (constitution owner). Nikhil's behavior is already merged on `main`; Prathamesh's contract update (PR #8) is the canonical reference. No code change required of Atharv.
+
+**Loosening note.** Per Article VI ("Loosening an architectural invariant requires extra scrutiny"), this amendment removes one explicit prohibition (gateway reading `rl:global`). The replacement prohibition ("no cross-region call on hot path") is the *real* invariant the original was pointing at; the gateway's local-only `HGetAll` does not violate it. The single-writer-per-slot invariant — which is the actual load-bearing CRDT correctness property — is preserved verbatim.
