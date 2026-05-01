@@ -18,6 +18,7 @@ class PrometheusClient:
     def __init__(self, url: str = PROMETHEUS_URL) -> None:
         self._url = url
         self._prom: Any = None
+        self._last_success: float = 0.0
         try:
             from prometheus_api_client import PrometheusConnect
             self._prom = PrometheusConnect(url=url, disable_ssl=True)
@@ -28,10 +29,18 @@ class PrometheusClient:
         if self._prom is None:
             return None
         try:
-            return self._prom.custom_query(query=promql)
+            result = self._prom.custom_query(query=promql)
+            self._last_success = time.time()
+            return result
         except Exception:
             print(f"[metrics_client] Prometheus unreachable at {self._url} — using synthetic data")
             return None
+
+    def seconds_since_live(self) -> float:
+        """Seconds since last successful Prometheus query. Returns math.inf if never connected."""
+        if self._last_success == 0.0:
+            return math.inf
+        return time.time() - self._last_success
 
     def request_rate(self, window: str = "1m") -> list[dict[str, Any]]:
         """RPS per region+tier averaged over `window` (Contract 3: rl_requests_total)."""

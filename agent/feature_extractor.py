@@ -1,17 +1,53 @@
 from __future__ import annotations
 
+import time
+
 from metrics_client import PrometheusClient, REGIONS, TIERS
 
-# {region: {free_rps, premium_rps, internal_rps, rejection_rate}}
 Features = dict[str, dict[str, float]]
 
+# Use cached features up to this long after Prometheus becomes unreachable
+STALE_WINDOW_SECONDS = 120
 
-def extract(client: PrometheusClient, window: str = "5m") -> Features:
-    """Reshape last `window` of Prometheus metrics into a flat per-region feature dict.
+# Zero-RPS conservative defaults — avoids over-throttling when we have no data at all
+_STATIC_DEFAULTS: Features = {
+    r: {f"{t}_rps": 0.0 for t in TIERS} | {"rejection_rate": 0.0}
+    for r in REGIONS
+}
 
-    Seeds every region+tier with 0.0 so downstream code never sees missing keys,
-    even when Prometheus has gaps (e.g. a tier with zero traffic).
+
+class FeatureExtractor:
+    """Extracts per-region features from Prometheus with graceful staleness handling.
+
+    On each call to extract():
+      - If Prometheus was live in the current tick: return fresh features and cache them.
+      - If Prometheus is down and cache is < STALE_WINDOW_SECONDS old: return cached features.
+      - If Prometheus is down and cache is expired (or empty): return zero-RPS static defaults.
+
+    The "live" check uses client.seconds_since_live() — updated by _query() on every
+    successful Prometheus call, so a value < 15 s means the current tick's query succeeded.
     """
+
+    def __init__(self) -> None:
+        self._cache: Features | None = None
+        self._cache_at: float = 0.0
+
+    def extract(self, client: PrometheusClient, window: str = "5m") -> Features:
+        features = _do_extract(client, window)
+
+        if client.seconds_since_live() < 15:
+            self._cache = features
+            self._cache_at = time.time()
+            return features
+
+        stale_secs = time.time() - self._cache_at
+        if self._cache is not None and stale_secs <= STALE_WINDOW_SECONDS:
+            return self._cache
+
+        return {r: dict(row) for r, row in _STATIC_DEFAULTS.items()}
+
+
+def _do_extract(client: PrometheusClient, window: str) -> Features:
     features: Features = {
         r: {f"{t}_rps": 0.0 for t in TIERS} | {"rejection_rate": 0.0}
         for r in REGIONS
@@ -23,7 +59,6 @@ def extract(client: PrometheusClient, window: str = "5m") -> Features:
         if region in features and tier in TIERS:
             features[region][f"{tier}_rps"] = _fval(row)
 
-    # Rejection rate: per-region average across tiers (simple mean — good enough for policy decisions)
     rej_by_region: dict[str, list[float]] = {r: [] for r in REGIONS}
     for row in client.rejection_rate(window=window):
         region = row["metric"].get("region")

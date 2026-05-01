@@ -3,7 +3,7 @@ import time
 
 from decider import Decider
 from decision_log import DecisionLog
-from feature_extractor import extract
+from feature_extractor import FeatureExtractor
 from metrics_client import PrometheusClient
 from policy_writer import PolicyWriter
 from predictor import HoltWintersPredictor
@@ -13,6 +13,7 @@ TICK_INTERVAL_SECONDS = 10
 
 async def agent_loop() -> None:
     client = PrometheusClient()
+    extractor = FeatureExtractor()
     predictor = HoltWintersPredictor()
     writer = PolicyWriter(log=DecisionLog())
     decider = Decider(writer=writer)
@@ -27,7 +28,7 @@ async def agent_loop() -> None:
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         print(f"[{ts}] agent tick #{tick}")
 
-        features = extract(client)
+        features = extractor.extract(client)
         predictions = predictor.update(features)
         top_users = client.top_user_share()
         decider.decide(features, predictions, top_users)

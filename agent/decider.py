@@ -21,6 +21,7 @@ DEFAULT_BURST:  dict[str, int] = {"free":  20, "premium":  200, "internal":  200
 
 HYSTERESIS_SECONDS    = 60    # don't reverse a decision within this window
 SPIKE_THRESHOLD       = 0.80  # predicted > 80% of capacity → throttle free
+ANOMALY_SPIKE_THRESHOLD = 0.60  # lower trigger when IsolationForest flags the series as anomalous
 RECOVERY_THRESHOLD    = 0.50  # predicted < 50% of capacity → restore free
 NOISY_NEIGHBOR_SHARE  = 0.30  # single user_id > 30% of tier traffic → override
 
@@ -78,19 +79,24 @@ class Decider:
         state = self._state[region]["free"]
         age = now - state.written_at
 
-        if predicted_rps > SPIKE_THRESHOLD * capacity and not state.throttled and age > HYSTERESIS_SECONDS:
+        # Anomaly flag lowers the spike trigger: statistically unusual traffic patterns
+        # warrant earlier intervention even before hitting the normal 80% capacity wall.
+        effective_threshold = ANOMALY_SPIKE_THRESHOLD if free_pred.anomaly else SPIKE_THRESHOLD
+        reason_tag = "anomaly_spike" if free_pred.anomaly else "predicted_spike"
+
+        if predicted_rps > effective_threshold * capacity and not state.throttled and age > HYSTERESIS_SECONDS:
             new_limit = max(10, int(state.limit_per_minute * 0.70))
             self._writer.write_policy(
                 region=region,
                 tier="free",
                 limit_per_minute=new_limit,
                 burst=max(5, new_limit // 5),
-                reason=f"predicted_spike_{region}_free_{predicted_rps:.1f}_rps",
+                reason=f"{reason_tag}_{region}_free_{predicted_rps:.1f}_rps",
             )
             self._state[region]["free"] = _TierState(
                 limit_per_minute=new_limit, written_at=now, throttled=True
             )
-            print(f"  [decider] {region}/free throttled → {new_limit} req/min  (predicted {predicted_rps:.1f} rps)")
+            print(f"  [decider] {region}/free throttled → {new_limit} req/min  (predicted {predicted_rps:.1f} rps, anomaly={free_pred.anomaly})")
 
         elif state.throttled and predicted_rps < RECOVERY_THRESHOLD * capacity and age > HYSTERESIS_SECONDS:
             self._writer.write_policy(

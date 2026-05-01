@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from decider import (
+    ANOMALY_SPIKE_THRESHOLD,
     DEFAULT_LIMITS,
     HYSTERESIS_SECONDS,
     NOISY_NEIGHBOR_SHARE,
@@ -165,3 +166,77 @@ def test_noisy_neighbor_fires_after_hysteresis_expires():
     decider.decide({}, _predictions(0.0), top_users)
 
     assert writer.write_override.called
+
+
+# ── anomaly-aware throttle ────────────────────────────────────────────────────
+
+def _anomaly_predictions(free_rps: float, anomaly: bool) -> dict:
+    """Build predictions where us/free has a custom rps and anomaly flag."""
+    from metrics_client import REGIONS, TIERS
+    return {
+        r: {
+            t: Prediction(
+                rps=free_rps if (r == "us" and t == "free") else 5.0,
+                is_spike=False,
+                anomaly=(anomaly and r == "us" and t == "free"),
+            )
+            for t in TIERS
+        }
+        for r in REGIONS
+    }
+
+
+def test_anomaly_throttle_fires_at_lower_threshold():
+    """anomaly=True must trigger throttle between ANOMALY (60%) and normal (80%) thresholds."""
+    decider, writer = _make_decider()
+    for region in decider._state:
+        decider._state[region]["free"].written_at = _past_hysteresis()
+
+    # 65% capacity — above ANOMALY_SPIKE_THRESHOLD (60%) but below SPIKE_THRESHOLD (80%)
+    rps = TIER_CAPACITY_RPS["free"] * (ANOMALY_SPIKE_THRESHOLD + 0.05)
+    decider.decide({}, _anomaly_predictions(rps, anomaly=True), {})
+
+    assert writer.write_policy.called
+    call = writer.write_policy.call_args.kwargs
+    assert "anomaly" in call["reason"]
+    assert call["limit_per_minute"] < DEFAULT_LIMITS["free"]
+
+
+def test_anomaly_below_anomaly_threshold_no_throttle():
+    """anomaly=True below ANOMALY_SPIKE_THRESHOLD must NOT fire."""
+    decider, writer = _make_decider()
+    for region in decider._state:
+        decider._state[region]["free"].written_at = _past_hysteresis()
+
+    rps = TIER_CAPACITY_RPS["free"] * (ANOMALY_SPIKE_THRESHOLD - 0.05)
+    decider.decide({}, _anomaly_predictions(rps, anomaly=True), {})
+
+    writer.write_policy.assert_not_called()
+
+
+def test_no_anomaly_between_thresholds_no_throttle():
+    """anomaly=False at 70% capacity — above anomaly threshold but below normal — must NOT fire."""
+    decider, writer = _make_decider()
+    for region in decider._state:
+        decider._state[region]["free"].written_at = _past_hysteresis()
+
+    # 70% — sits between ANOMALY_SPIKE_THRESHOLD (60%) and SPIKE_THRESHOLD (80%)
+    rps = TIER_CAPACITY_RPS["free"] * 0.70
+    assert rps < TIER_CAPACITY_RPS["free"] * SPIKE_THRESHOLD  # sanity check
+    decider.decide({}, _anomaly_predictions(rps, anomaly=False), {})
+
+    writer.write_policy.assert_not_called()
+
+
+def test_anomaly_reason_tag_distinguishes_from_normal_spike():
+    """Policy written on anomaly path must contain 'anomaly_spike', not 'predicted_spike'."""
+    decider, writer = _make_decider()
+    for region in decider._state:
+        decider._state[region]["free"].written_at = _past_hysteresis()
+
+    rps = TIER_CAPACITY_RPS["free"] * (ANOMALY_SPIKE_THRESHOLD + 0.05)
+    decider.decide({}, _anomaly_predictions(rps, anomaly=True), {})
+
+    reason = writer.write_policy.call_args.kwargs["reason"]
+    assert "anomaly_spike" in reason
+    assert "predicted_spike" not in reason
