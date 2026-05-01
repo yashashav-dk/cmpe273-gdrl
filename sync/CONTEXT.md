@@ -6,7 +6,7 @@ You are about to work in `sync/`. Read this file end-to-end before writing or mo
 
 Make the AI traffic-shaping agent possible by giving it a globally-coherent view of per-user request volume across three regions, with bounded staleness, no matter what fails. Sync observes and replicates. It does not enforce, it does not decide.
 
-## §2 Load-bearing invariants (quoted verbatim from `docs/sync-constitution.md`)
+## §2 Load-bearing invariants (paraphrased from `docs/sync-constitution.md`)
 
 > **Single-writer-per-slot.** The region's gateway is the only writer of that region's slot value, full stop. Sync max-merges peer slots received via pub/sub into the local hash; sync never writes its own region's slot. (Art III §6)
 
