@@ -1,6 +1,6 @@
 # Sync service — session handoff
 
-**Last updated:** 2026-04-30. Update the timestamp + "Where we are" section at the end of every Claude session.
+**Last updated:** 2026-05-01. Update the timestamp + "Where we are" section at the end of every Claude session.
 
 This file is the single starting point for any LLM session resuming sync-service work. Read it first; it routes to everything else.
 
@@ -17,7 +17,7 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 ## Where we are (update this section every session)
 
 **Branch:** `yashashav/sync-d5-foundation`
-**Current PDF day:** D5 (start). Today is 2026-04-30.
+**Current PDF day:** D5 (not yet started). Calendar slipped by one day; D5 work begins 2026-05-01.
 **Next task:** Task 1 — Scaffold sync package (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md`).
 **Code in `sync/`:** none yet (only `.gitkeep`).
 **Tests passing:** 0 / ~50 planned.
@@ -26,8 +26,8 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 History:
 - 2026-04-26: project brief, naming, sync constitution, sync design spec committed.
 - 2026-04-28: Constitution Amendment 1 + spec §4/§5/§6 rewritten to track merged gateway behavior; spec §14 (compressed timeline) + §15 (handover artifacts) added.
-- 2026-04-30 (today): plan written; ruff/mypy/CI gates rationalised; session phasing locked in.
-- **Next:** begin Phase 1 (Tasks 1–11) per the plan.
+- 2026-04-30: plan written; ruff/mypy/CI gates rationalised; session phasing locked in; this handoff file added.
+- **Next session:** begin Phase 1 (Tasks 1–11) per the plan.
 
 ---
 
@@ -92,14 +92,16 @@ If any gate fails, stop and fix before the day's PR.
 
 ## Session phasing map
 
-| Phase | Calendar | PDF day | Tasks | End state |
+| Phase | Calendar (slipped +1 day) | PDF day | Tasks | End state |
 |---|---|---|---|---|
-| 1 | 2026-04-30 | D5 | 1–11 | crdt + envelope + counter + handover docs; L1 + counter L2 green |
-| 2 | 2026-05-01 | D6 | 12–16 | transport + gateway-stub + sync-cli; L2 transport green |
-| 3 | 2026-05-02 | D7 | 17–21 | relay + reconciler + first 3-region e2e; L3 propagation green |
-| 4 | 2026-05-03 | D8 | 22–29 | buffer + admin + service + chaos proof + solo-demo; all 4 layers green; PR open |
-| 5 | 2026-05-04 | D9 | (new plan) | failure-mode drills, team integration, load test, CI workflow |
-| 6 | 2026-05-05 | D10 | (new plan) | dress rehearsal, sync-design.md writeup ≥1500 words |
+| 1 | 2026-05-01 | D5 | 1–11 | crdt + envelope + counter + handover docs; L1 + counter L2 green |
+| 2 | 2026-05-02 | D6 | 12–16 | transport + gateway-stub + sync-cli; L2 transport green |
+| 3 | 2026-05-03 | D7 | 17–21 | relay + reconciler + first 3-region e2e; L3 propagation green |
+| 4 | 2026-05-04 | D8 | 22–29 | buffer + admin + service + chaos proof + solo-demo; all 4 layers green; PR open |
+| 5 | 2026-05-05 | D9 | (new plan) | failure-mode drills, team integration, load test, CI workflow |
+| 6 | 2026-05-06 | D10 | (new plan) | dress rehearsal, sync-design.md writeup ≥1500 words |
+
+If the schedule slips again, reduce scope before extending dates: defer Layer 4 load test to D9, then defer CI workflow to D10. Do not slip the convergence proof or the all-layers-green gate — those are PDF-required.
 
 Constitution Art IX termination conditions verified by end of Phase 6.
 
