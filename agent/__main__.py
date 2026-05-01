@@ -1,11 +1,18 @@
+import argparse
 import os
 import sys
 
-# Direct imports in main.py (from decider import ...) resolve relative to agent/.
-# When invoked as `python -m agent` from the repo root, agent/ isn't on sys.path,
-# so we add it explicitly before importing main.
 sys.path.insert(0, os.path.dirname(__file__))
 
 from main import main  # noqa: E402
 
-main()
+parser = argparse.ArgumentParser(description="gdrl AI traffic shaping agent")
+parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="Run the full agent loop (predict + decide + log) without writing policies to Redis. "
+         "Use this for demo rehearsals to avoid polluting live policy state.",
+)
+args = parser.parse_args()
+
+main(dry_run=args.dry_run)

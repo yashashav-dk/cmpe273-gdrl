@@ -11,11 +11,11 @@ from predictor import HoltWintersPredictor
 TICK_INTERVAL_SECONDS = 10
 
 
-async def agent_loop() -> None:
+async def agent_loop(dry_run: bool = False) -> None:
     client = PrometheusClient()
     extractor = FeatureExtractor()
     predictor = HoltWintersPredictor()
-    writer = PolicyWriter(log=DecisionLog())
+    writer = PolicyWriter(log=DecisionLog(), dry_run=dry_run)
     decider = Decider(writer=writer)
 
     history = client.request_rate_range(window_minutes=30)
@@ -49,9 +49,10 @@ async def agent_loop() -> None:
         await asyncio.sleep(TICK_INTERVAL_SECONDS)
 
 
-def main() -> None:
-    print("gdrl AI traffic agent starting — tick every 10s (Holt-Winters + IsolationForest)")
-    asyncio.run(agent_loop())
+def main(dry_run: bool = False) -> None:
+    mode = " [DRY-RUN — no Redis writes]" if dry_run else ""
+    print(f"gdrl AI traffic agent starting — tick every 10s (Holt-Winters + IsolationForest){mode}")
+    asyncio.run(agent_loop(dry_run=dry_run))
 
 
 if __name__ == "__main__":

@@ -22,9 +22,13 @@ _OVERRIDE_TTL = 120  # seconds — shorter, overrides are more surgical
 
 
 class PolicyWriter:
-    def __init__(self, log: DecisionLog | None = None) -> None:
+    def __init__(self, log: DecisionLog | None = None, dry_run: bool = False) -> None:
         self._log = log or DecisionLog()
+        self._dry_run = dry_run
         self._clients: dict[str, redis.Redis] = {}
+        if dry_run:
+            print("[policy_writer] DRY-RUN mode — decisions logged, no Redis writes")
+            return
         for region, (host, port) in _REDIS_HOSTS.items():
             try:
                 r: redis.Redis = redis.Redis(host=host, port=port, decode_responses=True)
@@ -52,9 +56,12 @@ class PolicyWriter:
             "reason":           reason,
             "created_at":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        client = self._clients.get(region)
-        if client:
-            client.setex(f"policy:{region}:{tier}", ttl_seconds, json.dumps(policy))
+        prefix = "[DRY-RUN] " if self._dry_run else ""
+        print(f"{prefix}policy write → {region}/{tier}  limit={limit_per_minute}/min  reason={reason}")
+        if not self._dry_run:
+            client = self._clients.get(region)
+            if client:
+                client.setex(f"policy:{region}:{tier}", ttl_seconds, json.dumps(policy))
         self._log.append(policy)
         return policy
 
@@ -73,11 +80,13 @@ class PolicyWriter:
             "reason":           reason,
             "created_at":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        # Override beats tier policy everywhere — write to all regions
-        for client in self._clients.values():
-            try:
-                client.setex(f"override:{user_id}", ttl_seconds, json.dumps(override))
-            except Exception:
-                pass
+        prefix = "[DRY-RUN] " if self._dry_run else ""
+        print(f"{prefix}override write → {user_id}  limit={limit_per_minute}/min  reason={reason}")
+        if not self._dry_run:
+            for client in self._clients.values():
+                try:
+                    client.setex(f"override:{user_id}", ttl_seconds, json.dumps(override))
+                except Exception:
+                    pass
         self._log.append(override)
         return override
