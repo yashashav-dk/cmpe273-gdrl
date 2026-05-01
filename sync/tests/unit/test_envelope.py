@@ -50,3 +50,49 @@ def test_parse_counter_rejects_negative_value():
     )
     with pytest.raises(EnvelopeError):
         parse(raw)
+
+
+def test_parse_reconcile_envelope():
+    raw = (
+        b'{"kind":"reconcile","v":1,"origin":"us","window_id":29620586,'
+        b'"ts_ms":1714060800123,"slots":{"free:u_123":47,"premium:u_456":1203}}'
+    )
+    env = parse(raw)
+    assert isinstance(env, ReconcileEnvelope)
+    assert env.origin == "us"
+    assert env.window_id == 29620586
+    assert env.slots == {("free", "u_123"): 47, ("premium", "u_456"): 1203}
+
+
+def test_serialize_reconcile_roundtrip():
+    original = ReconcileEnvelope(
+        origin="eu",
+        window_id=99,
+        ts_ms=42,
+        slots={("free", "u_1"): 10, ("free", "u_2"): 20},
+    )
+    raw = serialize_reconcile(original)
+    parsed = parse(raw)
+    assert parsed == original
+
+
+def test_parse_reconcile_rejects_unknown_version():
+    raw = b'{"kind":"reconcile","v":99,"origin":"us","window_id":1,"ts_ms":1,"slots":{}}'
+    with pytest.raises(EnvelopeError, match="unknown version"):
+        parse(raw)
+
+
+def test_parse_reconcile_rejects_bad_slot_key():
+    raw = b'{"kind":"reconcile","v":1,"origin":"us","window_id":1,"ts_ms":1,"slots":{"badkey":1}}'
+    with pytest.raises(EnvelopeError, match="tier:user_id"):
+        parse(raw)
+
+
+def test_parse_rejects_non_object():
+    with pytest.raises(EnvelopeError):
+        parse(b'[1,2,3]')
+
+
+def test_parse_rejects_invalid_json():
+    with pytest.raises(EnvelopeError):
+        parse(b'not json')
