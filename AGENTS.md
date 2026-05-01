@@ -6,7 +6,7 @@ This repo is a 4-component team project (CMPE 273). Each top-level dir has one o
 
 | Dir | Owner | Purpose |
 |---|---|---|
-| `agent/` | Atharva | Observability-driven policy/override writer. Reads Prometheus metrics; writes `policy:*` and `override:*` to all 3 region Redises. |
+| `agent/` | Atharv | Observability-driven policy/override writer. Reads Prometheus metrics; writes `policy:*` and `override:*` to all 3 region Redises. |
 | `gateway/` | Nikhil | Go HTTP rate limiter on `/check`. Owns `rl:local:*` (full) and own-region slot of `rl:global:*:{w}`. Token bucket + sliding window via Lua. |
 | `simulator/` | Prathamesh | Python traffic generator + scenario library. Talks gateway HTTP only. |
 | `sync/` | Yashashav | Cross-region max-merge relay for `rl:global:*:{w}`. Subscribes pub/sub; writes peer slots into local Redis. |
@@ -40,5 +40,5 @@ The four contracts in `docs/contracts.md` are immutable from day 1 unless renego
 
 ## PR conventions
 
-Branches: `<owner>/<topic>` — e.g. `yashashav/sync-d5-foundation`, `atharva/day5-decider`.
+Branches: `<owner>/<topic>` — e.g. `yashashav/sync-d5-foundation`, `atharv/day5-decider`.
 Commits: prefix with `dayN(component):` for daily-scope work, or `feat|fix|chore|docs(scope):` for non-day work.
