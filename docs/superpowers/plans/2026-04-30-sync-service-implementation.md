@@ -1185,17 +1185,22 @@ git commit -m "day5(sync): counter — own-slot refusal, TTL refresh, idempotenc
 Run: `pytest sync/tests/unit sync/tests/integration/test_counter_redis.py -v`
 Expected: all green (4 crdt + 10 envelope + 11 counter = 25 tests).
 
-- [ ] **Step 2: Confirm handover docs exist**
+- [ ] **Step 2: Lint gate**
+
+Run: `ruff check sync/`
+Expected: no errors. If any, fix and re-run before pushing.
+
+- [ ] **Step 3: Confirm handover docs exist**
 
 Run: `test -f AGENTS.md && test -f sync/CONTEXT.md && echo OK`
 Expected: `OK`.
 
-- [ ] **Step 3: Confirm module docstrings present**
+- [ ] **Step 4: Confirm module docstrings present**
 
 Run: `grep -l "^Spec:" sync/crdt.py sync/envelope.py sync/counter.py`
 Expected: all three filenames printed.
 
-- [ ] **Step 4: Push branch**
+- [ ] **Step 5: Push branch**
 
 Run: `git push origin yashashav/sync-d5-foundation`
 Expected: branch updated on origin.
@@ -1720,12 +1725,17 @@ git commit -m "day6(sync): sync_cli.py — operator CLI skeleton (inspect, parti
 Run: `pytest sync/tests/unit sync/tests/integration -v`
 Expected: all green (25 from D5 + 3 transport + 1 stub = 29).
 
-- [ ] **Step 2: Confirm module docstrings present**
+- [ ] **Step 2: Lint gate**
+
+Run: `ruff check sync/`
+Expected: no errors.
+
+- [ ] **Step 3: Confirm module docstrings present**
 
 Run: `grep -l "^Spec:" sync/transport.py sync/dev/gateway_stub.py`
 Expected: both filenames printed.
 
-- [ ] **Step 3: Push branch**
+- [ ] **Step 4: Push branch**
 
 Run: `git push origin yashashav/sync-d5-foundation`
 
@@ -2546,12 +2556,17 @@ git commit -m "day7(sync): e2e — basic propagation across 3-region cluster (La
 Run: `pytest sync/tests/unit sync/tests/integration sync/tests/e2e -v`
 Expected: all green (29 from D6 + 5 partition_table + 4 relay + 3 reconciler + 1 e2e = 42).
 
-- [ ] **Step 2: Confirm module docstrings**
+- [ ] **Step 2: Lint gate**
+
+Run: `ruff check sync/`
+Expected: no errors.
+
+- [ ] **Step 3: Confirm module docstrings**
 
 Run: `grep -l "^Spec:" sync/relay.py sync/reconciler.py sync/partition_table.py sync/metrics.py`
 Expected: all four printed (metrics.py uses minimal docstring, that's OK).
 
-- [ ] **Step 3: Push branch (D7)**
+- [ ] **Step 4: Push branch (D7)**
 
 Run: `git push origin yashashav/sync-d5-foundation`
 
@@ -3443,7 +3458,12 @@ git commit -m "day8(sync): scripts/solo-demo.sh — single-command demo runner"
 Run: `pytest sync/tests/unit sync/tests/integration sync/tests/e2e sync/tests/chaos -v`
 Expected: every test green. ~50 tests total.
 
-- [ ] **Step 2: Confirm Constitution Art IX termination conditions**
+- [ ] **Step 2: Lint gate**
+
+Run: `ruff check sync/`
+Expected: no errors.
+
+- [ ] **Step 3: Confirm Constitution Art IX termination conditions**
 
 Conditions to confirm in the PR description:
 1. All four test layers green on the branch.
@@ -3453,11 +3473,11 @@ Conditions to confirm in the PR description:
 5. Day 9 chaos drills + `docs/failure-modes.md` deferred to D9.
 6. D10 dress rehearsal deferred.
 
-- [ ] **Step 3: Push branch**
+- [ ] **Step 4: Push branch**
 
 Run: `git push origin yashashav/sync-d5-foundation`
 
-- [ ] **Step 4: Open PR**
+- [ ] **Step 5: Open PR**
 
 Run:
 ```bash
@@ -3521,4 +3541,61 @@ EOF
 **Placeholder scan:** none found.
 
 **Scope:** single feature, four working days, ~50 tests, ~740 LOC application + ~250 LOC tests. Within budget.
+
+---
+
+## Validation gates
+
+Each PDF day's wrap task runs:
+1. **Test gate** — `pytest` for the layers in scope that day. D5 = unit + counter integration; D6 = +transport integration; D7 = +relay/reconciler integration + e2e propagation; D8 = +e2e partition + chaos.
+2. **Lint gate** — `ruff check sync/`. Cheap, catches drift before push.
+3. **Docstring gate** — `grep -l "^Spec:" sync/<new modules>` to confirm the per-module handover header (§15.3) is present on everything new that day.
+4. **Push gate** — `git push origin yashashav/sync-d5-foundation`. Branch state durable; tomorrow's session resumes from origin.
+
+### Gates intentionally skipped
+- **`mypy` / type-check gate.** Cost > value at 4-day budget; no public-facing types; runtime tests cover behavior. Revisit only if a typing bug actually bites.
+- **GitHub Actions CI workflow file (`.github/workflows/sync-ci.yml`).** Spec §10 lists it as a deliverable; deferred to D9 alongside team-integration work. Tonight's `make test` + `ruff check` is the local equivalent and is sufficient for the merge gate at D8.
+- **Pre-commit hook installation.** Yashashav can add it in D10 polish if useful; not blocking.
+
+### Per-task gates (subagent-driven)
+Inside each task the subagent loop already enforces:
+1. **Implementer self-review** — final step of TDD red→green; subagent confirms tests actually exercise the new code path.
+2. **Spec compliance review** — fresh subagent compares the diff against the named spec section; rejects under-builds and over-builds.
+3. **Code quality review** — fresh subagent flags magic numbers, missing docstrings, oversized files, unclear naming.
+
+A task is not marked complete until all three pass.
+
+---
+
+## Session phasing
+
+Multi-session execution is the recommended path. Each PDF day → one Claude session. `/clear` between sessions; the durable state lives on `yashashav/sync-d5-foundation` (branch), `MEMORY.md` (Yashashav's per-project memory), and this plan file.
+
+| Phase | Calendar | PDF day | Tasks | End state | Session-resume cue |
+|---|---|---|---|---|---|
+| 1 | 2026-04-30 (tonight) | D5 | 1–11 | Foundation + handover docs + crdt + envelope + counter; Layer 1 + counter L2 green; branch pushed | Memory: "D5 complete; resume D6" |
+| 2 | 2026-05-01 | D6 | 12–16 | Transport + gateway-stub + sync-cli; Layer 2 transport green | Memory: "D6 complete; resume D7" |
+| 3 | 2026-05-02 | D7 | 17–21 | Relay + reconciler + first 3-region e2e; Layer 3 propagation green | Memory: "D7 complete; resume D8" |
+| 4 | 2026-05-03 | D8 | 22–29 | Buffer + admin + service + chaos proof + solo-demo; all 4 layers green; PR open | Memory: "D8 complete; PR open at #N" |
+| 5 | 2026-05-04 | D9 | (D9 plan) | Failure-mode drills, team integration, load test, CI workflow | New plan: D9–D10 |
+| 6 | 2026-05-05 | D10 | (D10 plan) | Dress rehearsal, sync-design.md writeup ≥1500 words | Constitution Art IX termination |
+
+### Session start checklist (every phase after Phase 1)
+
+When starting a new phase session:
+
+1. **Confirm branch state.** `git checkout yashashav/sync-d5-foundation && git pull origin yashashav/sync-d5-foundation`
+2. **Read the durable trio.**
+   - `docs/superpowers/specs/2026-04-25-sync-service-design.md` (canonical design)
+   - `docs/sync-constitution.md` (rules, especially Appendix C Amendment 1)
+   - `docs/superpowers/plans/2026-04-30-sync-service-implementation.md` (this plan)
+3. **Spot-check memory.** Read `MEMORY.md` in the project memory dir; the `current_work.md` entry tells you which PDF day to start.
+4. **List unfinished tasks.** Skim plan for the first un-checked `- [ ]` item; that is your starting task.
+5. **Resume subagent loop.** Dispatch implementer for the next task; do not redo completed tasks.
+
+### Session end checklist (every phase)
+
+1. Run the day's wrap-task gates (test + lint + docstring + push).
+2. Update `current_work.md` memory: which PDF day completed, which is next.
+3. `/clear` to release context for the next session.
 
