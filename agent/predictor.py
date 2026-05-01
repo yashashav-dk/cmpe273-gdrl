@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
+from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 from metrics_client import REGIONS, TIERS
@@ -87,6 +88,7 @@ class HoltWintersPredictor:
         max_history: int = 120,
         retrain_every: int = 5,
         ewma_alpha: float = 0.3,
+        iso_contamination: float = 0.05,
     ) -> None:
         self._sp = seasonal_periods
         self._min_fit = 2 * seasonal_periods
@@ -106,6 +108,10 @@ class HoltWintersPredictor:
         self._ewma: dict[str, dict[str, float]] = {
             r: {t: 0.0 for t in TIERS} for r in REGIONS
         }
+        self._iso: dict[str, dict[str, IsolationForest | None]] = {
+            r: {t: None for t in TIERS} for r in REGIONS
+        }
+        self._iso_contamination = iso_contamination
 
     def warm_up(self, history: dict[str, list[float]]) -> None:
         """Seed history buffers and EWMA state from historical time series."""
@@ -137,10 +143,12 @@ class HoltWintersPredictor:
 
                 predicted = self._next_forecast(region, tier, buf, tick)
                 is_spike = predicted > 0 and current > 2 * predicted
+                anomaly = self._detect_anomaly(region, tier, current, buf, tick)
 
                 result[region][tier] = Prediction(
                     rps=round(predicted, 2),
                     is_spike=is_spike,
+                    anomaly=anomaly,
                 )
         return result
 
@@ -182,3 +190,24 @@ class HoltWintersPredictor:
         new = self._alpha * current + (1 - self._alpha) * prev if prev > 0 else current
         self._ewma[region][tier] = new
         return new
+
+    # ── anomaly detection ────────────────────────────────────────────────────
+
+    def _detect_anomaly(
+        self, region: str, tier: str, current: float, buf: deque[float], tick: int
+    ) -> bool:
+        if len(buf) < self._min_fit:
+            return False
+        if tick % self._retrain_every == 0:
+            self._retrain_iso(region, tier, buf)
+        clf = self._iso[region][tier]
+        if clf is None:
+            return False
+        return bool(clf.predict([[current]])[0] == -1)
+
+    def _retrain_iso(self, region: str, tier: str, buf: deque[float]) -> None:
+        X = np.array(list(buf), dtype=float).reshape(-1, 1)
+        self._iso[region][tier] = IsolationForest(
+            contamination=self._iso_contamination,
+            random_state=42,
+        ).fit(X)
