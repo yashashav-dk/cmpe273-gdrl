@@ -84,3 +84,36 @@ async def test_publish_local_round_trips_through_subscribe(three_redis_clients):
     await asyncio.wait_for(consumer, timeout=5.0)
 
     assert received == [("us", b"reconcile-payload")]
+
+
+@pytest.mark.asyncio
+async def test_subscribe_peers_recovers_after_disconnect(three_redis_clients):
+    local, peer1, peer2 = three_redis_clients
+    transport = Transport(
+        region="us",
+        local_redis=local,
+        peer_redises={"eu": peer1, "asia": peer2},
+        channel="rl:sync:counter",
+    )
+    received: list[tuple[str, bytes]] = []
+
+    async def consume():
+        async for origin, raw in transport.subscribe_peers():
+            received.append((origin, raw))
+            if len(received) == 2:
+                break
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.sleep(0.3)
+    await peer1.publish("rl:sync:counter", b"first")
+    await asyncio.sleep(0.3)
+
+    # Simulate transient peer reconnect by closing peer1's existing connections.
+    await peer1.execute_command("CLIENT", "KILL", "TYPE", "pubsub")
+    await asyncio.sleep(0.5)
+
+    await peer1.publish("rl:sync:counter", b"second")
+    await asyncio.wait_for(consumer, timeout=10.0)
+
+    payloads = sorted(raw for _, raw in received)
+    assert payloads == [b"first", b"second"]

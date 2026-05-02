@@ -55,15 +55,25 @@ class Transport:
                     pass
 
     async def _pump(self, origin: str, client: Redis, queue: asyncio.Queue) -> None:
-        pubsub = client.pubsub()
-        await pubsub.subscribe(self._channel)
-        try:
-            async for msg in pubsub.listen():
-                if msg.get("type") != "message":
-                    continue
-                data = msg.get("data")
-                if isinstance(data, bytes):
-                    await queue.put((origin, data))
-        finally:
-            await pubsub.unsubscribe(self._channel)
-            await pubsub.aclose()
+        backoff = 1.0
+        while True:
+            pubsub = client.pubsub()
+            try:
+                await pubsub.subscribe(self._channel)
+                backoff = 1.0
+                async for msg in pubsub.listen():
+                    if msg.get("type") != "message":
+                        continue
+                    data = msg.get("data")
+                    if isinstance(data, bytes):
+                        await queue.put((origin, data))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
+            finally:
+                try:
+                    await pubsub.aclose()
+                except Exception:
+                    pass
