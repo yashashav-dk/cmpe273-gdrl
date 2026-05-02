@@ -16,18 +16,41 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 
 ## Where we are (update this section every session)
 
-**Branch:** `yashashav/sync-d5-foundation`
-**Current PDF day:** D5 (not yet started). Calendar slipped by one day; D5 work begins 2026-05-01.
-**Next task:** Task 1 — Scaffold sync package (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md`).
-**Code in `sync/`:** none yet (only `.gitkeep`).
-**Tests passing:** 0 / ~50 planned.
-**Open PR:** none yet (D8 task 29 opens it).
+**Branch:** `yashashav/sync-d5-foundation` (pushed @ `2a323d3`)
+**Current PDF day:** D5 done. D6 next.
+**Next task:** Task 12 — Transport peer subscribe yields (origin, raw) (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 1216).
+**Code in `sync/`:** crdt.py, envelope.py, counter.py + Dockerfile.dev + tests/conftest.py + 3 test files.
+**Tests passing:** 29 / ~50 planned (8 crdt unit + 10 envelope unit + 11 counter integration). Plan said "25"; actual 29 because plan miscounted Task 6 additions. Lint clean.
+**Open PR:** none yet (D8 Task 29 opens it).
 
 History:
 - 2026-04-26: project brief, naming, sync constitution, sync design spec committed.
 - 2026-04-28: Constitution Amendment 1 + spec §4/§5/§6 rewritten to track merged gateway behavior; spec §14 (compressed timeline) + §15 (handover artifacts) added.
 - 2026-04-30: plan written; ruff/mypy/CI gates rationalised; session phasing locked in; this handoff file added.
-- **Next session:** begin Phase 1 (Tasks 1–11) per the plan.
+- 2026-05-01 → 2026-05-02 02:30: D5 executed (Tasks 1–11) via subagent-driven dev. 15 commits. All 4 D5 gates green (tests/lint/docstrings/push). Branch pushed.
+- **Next session:** begin Phase 2 (Tasks 12–16, D6 transport + harness).
+
+## Deferred concerns (not blocking; track for D9 polish)
+
+- Plan typo: "Atharva" → "Atharv" still in plan source (lines 319, 353). Fixed in AGENTS.md only.
+- Plan mislabel: §2 of `sync/CONTEXT.md` quotes labelled "verbatim" are paraphrases of constitution. Fixed inline; plan source still mislabeled.
+- Plan miscount: Task 11 expected "25 tests"; actual 29 (8+10+11). Plan source not updated.
+- `LICENSE-3RD-PARTY.md` for python3-crdt MIT attribution (D9).
+- `.dockerignore` at repo root (`__pycache__` lands in build context).
+- `EXPOSE 9100` in `sync/Dockerfile`.
+- `version: "3.9"` deprecated in compose; remove (D9).
+- `[tool.ruff.lint].select` not configured; defaults catch only F+E. Consider adding `B,UP,I,ASYNC` (D9).
+- README.md → AGENTS.md pointer (one-liner).
+- `from_slots` docstring: clarify rehydration-only intent.
+- `OwnSlotWriteError` test uses `pytest.raises(OwnSlotWriteError)` — keep distinct from ValueError.
+- testcontainers `@wait_container_is_ready` deprecation warning. Upstream-only.
+
+## Execution-mode note (D5 retrospective)
+
+- Subagent-driven workflow (implementer + spec reviewer + code quality reviewer per task) worked through Tasks 1–9. Task 10 implementer subagent crashed mid-step ("internal error"); recovered manually because tests were already written byte-exact to plan and pytest validated behavior — saved one round-trip.
+- Two minor plan deviations landed mid-flight, both reviewer-approved: (a) requirements split (runtime vs dev) before Task 2 Dockerfile; (b) `sync/Dockerfile.dev` + Makefile docker targets to handle host Python 3.10 / pyproject `>=3.11` mismatch (no local python install).
+- Lint auto-fix at D5 wrap removed 2 unused imports from `conftest.py`. `OwnSlotWriteError` import in `test_counter_redis.py` became used in Task 10 (no fix needed).
+- Time: D5 wall-clock ~3 hrs. Subagent dispatch overhead ~50% of wall time. Acceptable for quality bar.
 
 ---
 
