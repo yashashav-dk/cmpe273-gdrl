@@ -1,6 +1,4 @@
 """Shared pytest fixtures for sync tests."""
-import asyncio
-import pytest
 import pytest_asyncio
 from testcontainers.redis import RedisContainer
 from redis.asyncio import Redis
