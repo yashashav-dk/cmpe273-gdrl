@@ -56,18 +56,17 @@ class Relay:
         except EnvelopeError:
             MESSAGES_DROPPED.labels(cause="malformed").inc()
             return
-        # Partition check uses the envelope's asserted source region, not the
-        # transport-tagged origin: in production they coincide (subscriber tag
-        # == publisher region), and tests publish all envelopes through the
-        # local Redis so only the asserted region is meaningful.
+        # asserted region (envelope-claimed) drives partition + self-origin
+        # checks; transport-tagged origin drives metric labels (lag,
+        # messages_total). In production these coincide for trusted peers.
         asserted = env.region if isinstance(env, CounterEnvelope) else env.origin
         if self._partition.blocks(asserted, self._region):
             MESSAGES_DROPPED.labels(cause="partition").inc()
             return
         if isinstance(env, CounterEnvelope):
-            await self._handle_counter(asserted, env)
+            await self._handle_counter(origin, env)
         elif isinstance(env, ReconcileEnvelope):
-            await self._handle_reconcile(asserted, env)
+            await self._handle_reconcile(origin, env)
 
     async def _handle_counter(self, origin: str, env: CounterEnvelope) -> None:
         if env.region == self._region:
