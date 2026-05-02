@@ -1,6 +1,6 @@
 # Sync service — session handoff
 
-**Last updated:** 2026-05-02. Update the timestamp + "Where we are" section at the end of every Claude session.
+**Last updated:** 2026-05-02 (D7 wrap). Update the timestamp + "Where we are" section at the end of every Claude session.
 
 This file is the single starting point for any LLM session resuming sync-service work. Read it first; it routes to everything else.
 
@@ -16,11 +16,11 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 
 ## Where we are (update this section every session)
 
-**Branch:** `yashashav/sync-d5-foundation` (pushed @ `dcf2867`)
-**Current PDF day:** D5 + D6 done. D7 next.
-**Next task:** Task 17 — PartitionTable directional add/remove/blocks (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 1750).
-**Code in `sync/`:** crdt.py, envelope.py, counter.py, transport.py, dev/{__init__.py, gateway_stub.py, sync_cli.py} + Dockerfile.dev + tests/conftest.py + 4 test files.
-**Tests passing:** 33 / ~50 planned (18 unit: 8 crdt + 10 envelope; 15 integration: 11 counter + 3 transport + 1 stub). Plan said wrap = 29; actual 33 (plan miscounted again — D5 was 29, D6 added +4). Lint clean.
+**Branch:** `yashashav/sync-d5-foundation` (pushed @ `91315e2`)
+**Current PDF day:** D5 + D6 + D7 done. D8 next.
+**Next task:** Task 22 — FailoverBuffer finish + unit tests (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 2581).
+**Code in `sync/`:** crdt.py, envelope.py, counter.py, transport.py, partition_table.py, metrics.py, relay.py, buffer.py (stub), reconciler.py, dev/{__init__.py, gateway_stub.py, sync_cli.py} + Dockerfile.dev + tests/conftest.py + 7 test files (unit: crdt, envelope, partition_table; integration: counter_redis, transport_pubsub, gateway_stub, relay, reconciler; e2e: basic_propagation).
+**Tests passing:** 46 / ~50 planned (23 unit: 8 crdt + 10 envelope + 5 partition_table; 22 integration: 11 counter + 3 transport + 1 stub + 4 relay + 3 reconciler; 1 e2e basic_propagation). Plan said wrap = 42; actual 46 (plan miscounted again — D5 was +4, D6 was +4, D7 was +4). Lint clean.
 **Open PR:** none yet (D8 Task 29 opens it).
 
 History:
@@ -29,7 +29,8 @@ History:
 - 2026-04-30: plan written; ruff/mypy/CI gates rationalised; session phasing locked in; this handoff file added.
 - 2026-05-01 → 2026-05-02 02:30: D5 executed (Tasks 1–11) via subagent-driven dev. 15 commits. All 4 D5 gates green (tests/lint/docstrings/push). Branch pushed.
 - 2026-05-02: D6 executed (Tasks 12–16) via subagent-driven dev. 4 commits. All 4 D6 gates green (tests/lint/docstrings/push). Branch pushed @ `dcf2867`. 33 tests passing (+4 vs D5). Notable: Task 13 TDD deviation — disconnect-recovery test passed against minimal `_pump` because redis-py auto-reconnects pubsub on `CLIENT KILL TYPE pubsub` transparently; reviewer accepted (spec mandates explicit reconnect loop regardless).
-- **Next session:** begin Phase 3 (Tasks 17–21, D7 relay + reconciler + first 3-region e2e).
+- 2026-05-02: D7 executed (Tasks 17–21) via subagent-driven dev. 5 commits (+1 fix-up commit on Task 18). All 4 D7 wrap gates green (tests/lint/docstrings/push). Branch pushed @ `91315e2`. 46 tests passing (+13 vs D6). Three reviewer-approved deviations (see retro). Wall-clock ~45 min autonomous after delegation.
+- **Next session:** begin Phase 4 (Tasks 22–29, D8 buffer + admin + service + chaos proof + solo-demo + open PR).
 
 ## Deferred concerns (not blocking; track for D9 polish)
 
@@ -54,6 +55,13 @@ History:
 - `from_slots` docstring: clarify rehydration-only intent.
 - `OwnSlotWriteError` test uses `pytest.raises(OwnSlotWriteError)` — keep distinct from ValueError.
 - testcontainers `@wait_container_is_ready` deprecation warning. Upstream-only.
+- D7 Task 18 partition deviation: plan's `_handle` checks `self._partition.blocks(origin, self._region)` using transport-tagged origin. Switched to envelope-asserted region (`env.region` for counter, `env.origin` for reconcile) because test fixture uses `peer_redises={}` so transport tag is always local — plan-byte-exact code can't pass the test. In production both coincide for trusted peers. Metric labels (lag/messages_total) still use transport tag. Plan-source not amended.
+- D7 Task 19 reconcile-skip deviation: plan's `if value <= 0: continue` (using `get_own_slot`) contradicts plan's own test 2 (writes `us=0` for `u_0`, asserts 5 keys broadcast). `get_own_slot` cannot distinguish absent slot (HGET None → 0) from slot=0. Switched to `get_global` + `if self._region not in global_slots: continue`. Trade-off: HGETALL per user vs HGET. ~3× bytes. Negligible at chunk_size=1000 every 30s.
+- D7 Task 19 deferred polish: per-key `RECONCILE_KEYS.inc(1)` instead of post-loop `inc(keys)` (loses signal on long-pass crashes); `_tick`'s `except Exception: continue` lacks `logger.warning` line; `stats.chunks_published` not asserted in test 2 (only wire-side `len(received)`).
+- D7 Task 18 deferred polish: bare `except Exception:` in `_handle_counter`/`_handle_reconcile` swallows errors silently (Constitution Art II §6 / Art IV concern). Constitution-faithful fix lands in Task 22 when `Buffer.push` itself emits `BUFFER_SIZE`/`BUFFER_OVERFLOW` metrics. Buffer payload tuple shape `(tier, user_id, window_id, region, value)` is untyped — consider `BufferedSlot` NamedTuple in Task 22.
+- D7 Task 18 deferred polish: `metrics.py` has only `Spec:` line; missing `Reads:`/`Writes:`/`Don't:` (other modules carry full quintuplet per §15.3 convention). `buffer.py` has no `Spec:` line — Task 22 finishes it.
+- D7 Task 17 deferred polish: `PartitionTable.snapshot()` returns mutable `set`; could be `frozenset` for type-level immutability. No `__repr__` (will hurt operator CLI dumps). No idempotence test for repeated `add`.
+- D7 Task 20 deferred polish: `test-docker` aggregate Makefile target only runs unit+integration; could include `test-e2e-docker` for completeness.
 
 ## Execution-mode note (D5 retrospective)
 
@@ -67,6 +75,13 @@ History:
 - Subagent-driven workflow held through Tasks 12–15 (4 implementer + 7 reviewer dispatches; Task 15 used a single combined reviewer because the CLI skeleton has no test coverage to split spec vs quality concerns over).
 - Two plan deviations, both reviewer-approved: (a) Task 14 `gateway_stub.py` docstring augmented with `Spec:` and `Constitution:` lines because Task 16 wrap-task grep checks both `transport.py` and `gateway_stub.py`; plan code block omitted them. (b) Task 13 TDD discipline violation — disconnect-recovery test passed against the minimal `_pump` (redis-py auto-reconnects pubsub on `CLIENT KILL TYPE pubsub`), so the failing-test-first step never failed. Spec-mandated reconnect loop shipped anyway; test serves as regression guard for harder failure modes (server restart, full TCP teardown).
 - D6 wall-clock ~30 min (autonomous mode after user delegated). All 4 wrap gates first-try green.
+
+## Execution-mode note (D7 retrospective)
+
+- Subagent-driven workflow held through Tasks 17–20 (4 implementer + 6 reviewer dispatches + 1 fix-up implementer dispatch on Task 18; Task 20 used a single combined reviewer per Task-15 precedent because the e2e is a single test + tiny Makefile diff). Task 21 wrap ran in main session (5 verification commands, no subagent needed).
+- Three reviewer-approved deviations: (a) Task 18 partition check switched from transport-tag to envelope-asserted region (test fixture necessitates; production-equivalent for trusted peers). (b) Task 18 fix-up commit (`ee05c66`) corrected `_handle` to thread transport-tag through to metric labels — original commit accidentally used asserted region for both partition AND metrics. (c) Task 19 reconcile-skip: plan's `if value <= 0: continue` was buggy vs plan's own test 2 (`us=0` for u_0); switched to `get_global` + presence check. Spec reviewer confirmed plan code was wrong; implementer's reading was spec-faithful (§5.reconciler.py + §6 Flow 3 say no value threshold).
+- Plan miscount streak holds: D5 +4, D6 +4, D7 +4 (predicted 42 / actual 46).
+- D7 wall-clock ~45 min (autonomous mode after user delegated). All 4 wrap gates first-try green; one mid-task reviewer fix-up.
 
 ---
 
