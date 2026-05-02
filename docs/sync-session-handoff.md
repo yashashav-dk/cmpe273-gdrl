@@ -1,6 +1,6 @@
 # Sync service — session handoff
 
-**Last updated:** 2026-05-01. Update the timestamp + "Where we are" section at the end of every Claude session.
+**Last updated:** 2026-05-02. Update the timestamp + "Where we are" section at the end of every Claude session.
 
 This file is the single starting point for any LLM session resuming sync-service work. Read it first; it routes to everything else.
 
@@ -16,11 +16,11 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 
 ## Where we are (update this section every session)
 
-**Branch:** `yashashav/sync-d5-foundation` (pushed @ `2a323d3`)
-**Current PDF day:** D5 done. D6 next.
-**Next task:** Task 12 — Transport peer subscribe yields (origin, raw) (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 1216).
-**Code in `sync/`:** crdt.py, envelope.py, counter.py + Dockerfile.dev + tests/conftest.py + 3 test files.
-**Tests passing:** 29 / ~50 planned (8 crdt unit + 10 envelope unit + 11 counter integration). Plan said "25"; actual 29 because plan miscounted Task 6 additions. Lint clean.
+**Branch:** `yashashav/sync-d5-foundation` (pushed @ `dcf2867`)
+**Current PDF day:** D5 + D6 done. D7 next.
+**Next task:** Task 17 — PartitionTable directional add/remove/blocks (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 1750).
+**Code in `sync/`:** crdt.py, envelope.py, counter.py, transport.py, dev/{__init__.py, gateway_stub.py, sync_cli.py} + Dockerfile.dev + tests/conftest.py + 4 test files.
+**Tests passing:** 33 / ~50 planned (18 unit: 8 crdt + 10 envelope; 15 integration: 11 counter + 3 transport + 1 stub). Plan said wrap = 29; actual 33 (plan miscounted again — D5 was 29, D6 added +4). Lint clean.
 **Open PR:** none yet (D8 Task 29 opens it).
 
 History:
@@ -28,13 +28,23 @@ History:
 - 2026-04-28: Constitution Amendment 1 + spec §4/§5/§6 rewritten to track merged gateway behavior; spec §14 (compressed timeline) + §15 (handover artifacts) added.
 - 2026-04-30: plan written; ruff/mypy/CI gates rationalised; session phasing locked in; this handoff file added.
 - 2026-05-01 → 2026-05-02 02:30: D5 executed (Tasks 1–11) via subagent-driven dev. 15 commits. All 4 D5 gates green (tests/lint/docstrings/push). Branch pushed.
-- **Next session:** begin Phase 2 (Tasks 12–16, D6 transport + harness).
+- 2026-05-02: D6 executed (Tasks 12–16) via subagent-driven dev. 4 commits. All 4 D6 gates green (tests/lint/docstrings/push). Branch pushed @ `dcf2867`. 33 tests passing (+4 vs D5). Notable: Task 13 TDD deviation — disconnect-recovery test passed against minimal `_pump` because redis-py auto-reconnects pubsub on `CLIENT KILL TYPE pubsub` transparently; reviewer accepted (spec mandates explicit reconnect loop regardless).
+- **Next session:** begin Phase 3 (Tasks 17–21, D7 relay + reconciler + first 3-region e2e).
 
 ## Deferred concerns (not blocking; track for D9 polish)
 
 - Plan typo: "Atharva" → "Atharv" still in plan source (lines 319, 353). Fixed in AGENTS.md only.
 - Plan mislabel: §2 of `sync/CONTEXT.md` quotes labelled "verbatim" are paraphrases of constitution. Fixed inline; plan source still mislabeled.
-- Plan miscount: Task 11 expected "25 tests"; actual 29 (8+10+11). Plan source not updated.
+- Plan miscount: Task 11 expected "25 tests"; actual 29. Task 16 expected "29 tests"; actual 33. Plan source not updated.
+- Plan miscalibration (Task 13): expected disconnect-recovery test to fail against minimal `_pump`; redis-py auto-reconnects pubsub transparently so test passes either way. Spec-mandated reconnect loop still required and shipped — test now serves as regression guard for harder failure modes. Document the redis-py behavior in spec §5.transport.py if a future session re-adds the test.
+- TTL inconsistency: `sync/dev/gateway_stub.py` uses `expire(global_key, 120)` while `sync/counter.py` uses `GLOBAL_TTL_SECONDS = 300`. Last-writer-wins on TTL means stub will shorten TTL on every allow_request after counter sets it to 300. Plan-verbatim, not blocking — but reconcile to a shared constant in D9.
+- `transport.py` magic numbers `1.0` / `30.0` for backoff — promote to module constants `BACKOFF_INITIAL_S` / `BACKOFF_MAX_S` (D9).
+- `transport.py:54` `except (asyncio.CancelledError, Exception):` is functionally identical to `except Exception:` (CancelledError derives from BaseException in 3.11). Either narrow or comment.
+- `transport.py:_pump` `queue` parameter unparametrized vs the `subscribe_peers` local at line 40 which is `asyncio.Queue[tuple[str, bytes]]`. Tighten.
+- `gateway_stub.py` `int(new_value)` cast applied twice on the same value — pure style, bind once.
+- `sync_cli.py` httpx 2.0s timeout undocumented magic — promote to constant or comment.
+- Tests use undocumented `0.3s` settle / `0.5s` reconnect / `5.0s`/`10.0s` consumer-deadline magic numbers — comment intent.
+- Test duplication: `test_transport_pubsub.py` has near-duplicate `Transport(...)` construction across the 3 tests; could fixture-ize.
 - `LICENSE-3RD-PARTY.md` for python3-crdt MIT attribution (D9).
 - `.dockerignore` at repo root (`__pycache__` lands in build context).
 - `EXPOSE 9100` in `sync/Dockerfile`.
@@ -51,6 +61,12 @@ History:
 - Two minor plan deviations landed mid-flight, both reviewer-approved: (a) requirements split (runtime vs dev) before Task 2 Dockerfile; (b) `sync/Dockerfile.dev` + Makefile docker targets to handle host Python 3.10 / pyproject `>=3.11` mismatch (no local python install).
 - Lint auto-fix at D5 wrap removed 2 unused imports from `conftest.py`. `OwnSlotWriteError` import in `test_counter_redis.py` became used in Task 10 (no fix needed).
 - Time: D5 wall-clock ~3 hrs. Subagent dispatch overhead ~50% of wall time. Acceptable for quality bar.
+
+## Execution-mode note (D6 retrospective)
+
+- Subagent-driven workflow held through Tasks 12–15 (4 implementer + 7 reviewer dispatches; Task 15 used a single combined reviewer because the CLI skeleton has no test coverage to split spec vs quality concerns over).
+- Two plan deviations, both reviewer-approved: (a) Task 14 `gateway_stub.py` docstring augmented with `Spec:` and `Constitution:` lines because Task 16 wrap-task grep checks both `transport.py` and `gateway_stub.py`; plan code block omitted them. (b) Task 13 TDD discipline violation — disconnect-recovery test passed against the minimal `_pump` (redis-py auto-reconnects pubsub on `CLIENT KILL TYPE pubsub`), so the failing-test-first step never failed. Spec-mandated reconnect loop shipped anyway; test serves as regression guard for harder failure modes (server restart, full TCP teardown).
+- D6 wall-clock ~30 min (autonomous mode after user delegated). All 4 wrap gates first-try green.
 
 ---
 
