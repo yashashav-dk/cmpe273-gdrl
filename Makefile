@@ -1,5 +1,6 @@
 .PHONY: test test-unit test-integration test-e2e test-chaos demo-sync convergence-proof clean \
-        dev-image test-unit-docker test-integration-docker test-e2e-docker lint-docker test-docker
+        dev-image test-unit-docker test-integration-docker test-e2e-docker test-chaos-docker \
+        lint-docker test-docker
 
 PYTHON ?= python3
 PYTEST ?= $(PYTHON) -m pytest
@@ -42,6 +43,9 @@ test-integration-docker: dev-image
 
 test-e2e-docker: dev-image
 	$(DOCKER_RUN_TC) $(DEV_IMAGE) pytest sync/tests/e2e -v
+
+test-chaos-docker: dev-image
+	$(DOCKER_RUN_TC) $(DEV_IMAGE) pytest sync/tests/chaos -v
 
 lint-docker: dev-image
 	$(DOCKER_RUN) $(DEV_IMAGE) ruff check sync/

@@ -1,0 +1,7 @@
+convergence_test
+partition_window_s=6.0
+events_during_partition=368
+us_final_value=378
+converged_in_s=1.025
+target_s=5.0
+passed=True
