@@ -48,8 +48,11 @@ async def test_buffer_fills_when_local_redis_fails():
                 "rl:sync:counter",
                 f'{{"tier":"free","user_id":"u_{i}","window_id":1,"region":"eu","value":1,"ts_ms":1}}'.encode(),
             )
-        # Poll up to 5s for the buffer to fill (relay needs time to detect dead local + push).
-        deadline = time.time() + 5.0
+        # Poll up to 15s for the buffer to fill. relay._handle is serial; in
+        # docker-in-docker the first apply_remote_slot can take ~4-5s end-to-end
+        # (existing socket EOF → reconnect → 1s connect_timeout × EVALSHA→EVAL
+        # script-load fallback). 15s gives headroom across reruns.
+        deadline = time.time() + 15.0
         while time.time() < deadline:
             if buffer.size("relay_apply") > 0:
                 break
