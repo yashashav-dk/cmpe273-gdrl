@@ -1,6 +1,6 @@
 # Sync service — session handoff
 
-**Last updated:** 2026-05-02 (D7 wrap). Update the timestamp + "Where we are" section at the end of every Claude session.
+**Last updated:** 2026-05-03 (D8 wrap, PR #20 open). Update the timestamp + "Where we are" section at the end of every Claude session.
 
 This file is the single starting point for any LLM session resuming sync-service work. Read it first; it routes to everything else.
 
@@ -16,12 +16,13 @@ Teammates: Atharva (`agent/`), Prathamesh (`simulator/`), Nikhil (`gateway/`). A
 
 ## Where we are (update this section every session)
 
-**Branch:** `yashashav/sync-d5-foundation` (pushed @ `91315e2`)
-**Current PDF day:** D5 + D6 + D7 done. D8 next.
-**Next task:** Task 22 — FailoverBuffer finish + unit tests (`docs/superpowers/plans/2026-04-30-sync-service-implementation.md` line 2581).
-**Code in `sync/`:** crdt.py, envelope.py, counter.py, transport.py, partition_table.py, metrics.py, relay.py, buffer.py (stub), reconciler.py, dev/{__init__.py, gateway_stub.py, sync_cli.py} + Dockerfile.dev + tests/conftest.py + 7 test files (unit: crdt, envelope, partition_table; integration: counter_redis, transport_pubsub, gateway_stub, relay, reconciler; e2e: basic_propagation).
-**Tests passing:** 46 / ~50 planned (23 unit: 8 crdt + 10 envelope + 5 partition_table; 22 integration: 11 counter + 3 transport + 1 stub + 4 relay + 3 reconciler; 1 e2e basic_propagation). Plan said wrap = 42; actual 46 (plan miscounted again — D5 was +4, D6 was +4, D7 was +4). Lint clean.
-**Open PR:** none yet (D8 Task 29 opens it).
+**Branch:** `yashashav/sync-d5-foundation` (pushed @ `533cad5`)
+**Current PDF day:** D5 + D6 + D7 + D8 done. **All 29 plan tasks complete.** D9 next.
+**Next task:** D9 plan TBD (failure-mode drills, `docs/failure-modes.md`, team integration, load test, CI workflow `.github/workflows/sync-ci.yml`, plan-defect amendments).
+**Code in `sync/`:** crdt.py, envelope.py, counter.py, transport.py, partition_table.py, metrics.py, relay.py, buffer.py, reconciler.py, admin.py, service.py, dev/{__init__.py, gateway_stub.py, sync_cli.py} + Dockerfile + Dockerfile.dev + tests/conftest.py + 9 test files (unit: crdt, envelope, partition_table, buffer; integration: counter_redis, transport_pubsub, gateway_stub, relay, reconciler, admin; e2e: basic_propagation, partition; chaos: convergence, redis_failure). Plus `scripts/solo-demo.sh`.
+**Tests passing:** 59 / ~50 planned (28 unit: 8 crdt + 10 envelope + 5 partition_table + 5 buffer; 27 integration: 11 counter + 3 transport + 1 stub + 4 relay + 3 reconciler + 5 admin; 2 e2e: basic_propagation + partition; 2 chaos: convergence + redis_failure). Plan miscount streak holds for 4th day (+4/day; D8 ended at +9 vs plan's 50). Lint clean.
+**Open PR:** **#20** — `sync(d5–d8): foundation through chaos proof` (https://github.com/yashashav-dk/cmpe273-gdrl/pull/20).
+**Convergence proof:** 15 runs in `sync/tests/chaos/results/`, all `passed=True`, range 0.962s–1.031s, target <5s. Constitution Art IX termination conditions satisfied for D8 scope.
 
 History:
 - 2026-04-26: project brief, naming, sync constitution, sync design spec committed.
@@ -30,7 +31,8 @@ History:
 - 2026-05-01 → 2026-05-02 02:30: D5 executed (Tasks 1–11) via subagent-driven dev. 15 commits. All 4 D5 gates green (tests/lint/docstrings/push). Branch pushed.
 - 2026-05-02: D6 executed (Tasks 12–16) via subagent-driven dev. 4 commits. All 4 D6 gates green (tests/lint/docstrings/push). Branch pushed @ `dcf2867`. 33 tests passing (+4 vs D5). Notable: Task 13 TDD deviation — disconnect-recovery test passed against minimal `_pump` because redis-py auto-reconnects pubsub on `CLIENT KILL TYPE pubsub` transparently; reviewer accepted (spec mandates explicit reconnect loop regardless).
 - 2026-05-02: D7 executed (Tasks 17–21) via subagent-driven dev. 5 commits (+1 fix-up commit on Task 18). All 4 D7 wrap gates green (tests/lint/docstrings/push). Branch pushed @ `91315e2`. 46 tests passing (+13 vs D6). Three reviewer-approved deviations (see retro). Wall-clock ~45 min autonomous after delegation.
-- **Next session:** begin Phase 4 (Tasks 22–29, D8 buffer + admin + service + chaos proof + solo-demo + open PR).
+- 2026-05-03: D8 executed (Tasks 22–29) via subagent-driven dev. 10 commits (+1 prod fix-up on `service.py` socket timeouts triggered by Task 27 chaos diagnosis, +1 chaos test fix-up bumping polling 5s→15s after D8-wrap reproducible failure surfaced socket_timeout/EVALSHA-fallback timing). All 4 D8 wrap gates green (4 layers/lint/docstrings/push) + PR #20 opened. 59 tests passing (+13 vs D7). Convergence proof: 15 runs all <1.05s, target <5s. **Five plan defects** worked around (T18 partition, T19 reconcile-skip, T22 stub overflow, T25/26 hardcoded windows, T27 socket timeouts). Wall-clock ~3 hrs (long-running chaos diagnosis ate ~30 min).
+- **Next session:** begin D9 (new plan TBD). Scope: failure-mode drills, `docs/failure-modes.md`, team integration, load test, CI workflow, plan-source amendments for the 5 defects. PR #20 stays open until reviewer feedback round closes.
 
 ## Deferred concerns (not blocking; track for D9 polish)
 
@@ -61,7 +63,17 @@ History:
 - D7 Task 18 deferred polish: bare `except Exception:` in `_handle_counter`/`_handle_reconcile` swallows errors silently (Constitution Art II §6 / Art IV concern). Constitution-faithful fix lands in Task 22 when `Buffer.push` itself emits `BUFFER_SIZE`/`BUFFER_OVERFLOW` metrics. Buffer payload tuple shape `(tier, user_id, window_id, region, value)` is untyped — consider `BufferedSlot` NamedTuple in Task 22.
 - D7 Task 18 deferred polish: `metrics.py` has only `Spec:` line; missing `Reads:`/`Writes:`/`Don't:` (other modules carry full quintuplet per §15.3 convention). `buffer.py` has no `Spec:` line — Task 22 finishes it.
 - D7 Task 17 deferred polish: `PartitionTable.snapshot()` returns mutable `set`; could be `frozenset` for type-level immutability. No `__repr__` (will hurt operator CLI dumps). No idempotence test for repeated `add`.
-- D7 Task 20 deferred polish: `test-docker` aggregate Makefile target only runs unit+integration; could include `test-e2e-docker` for completeness.
+- D7 Task 20 deferred polish: `test-docker` aggregate Makefile target only runs unit+integration; could include `test-e2e-docker` and `test-chaos-docker` for completeness (D8 added the e2e+chaos targets).
+- D8 Task 22 plan defect: plan claimed Step-2 ("run tests against the Task 18 stub") yields 5 pass — actually only 4 pass; D7 stub `push` returns False on overflow without appending the new payload (drops new), so `test_overflow_drops_oldest_and_returns_false` fails until prod impl swap. Prod impl correct (drops oldest, appends new). Plan source not amended.
+- D8 Task 23 test deviation: `fastapi.testclient.TestClient` swapped for `httpx.AsyncClient` + `httpx.ASGITransport` because `redis_client` conftest fixture lives on pytest-asyncio loop while TestClient spawns its own anyio portal loop — cross-loop futures error fires on `/health` and `/admin/state`. Same endpoints + assertions; test driver only.
+- D8 Task 25/26 plan defect: plan-byte-exact tests use literal `window_id=100` / `window_id=200`. Reconciler scans `now_window = int(time.time() // 60)` (epoch-minute, ~29M today) + previous minute only — literal windows never converge. Both tests use dynamic `window = int(time.time() // 60)` instead. Affects partition+heal e2e and chaos convergence proof. Plan source not amended.
+- D8 Task 27 plan defect + production gap: chaos test required `socket_connect_timeout=1.0` AND `socket_timeout=1.0` AND polling-loop deadline 15s (not 1.5s sleep) for reliability across reruns in docker-in-docker. Underlying production gap also fixed: `service.py`'s `Redis.from_url` now sets the same fast-fail kwargs (commit `eea9b4a`). Reason: Constitution Art VII degraded-mode buffer cannot engage if relay wedges 9s on TCP connect. EVALSHA→EVAL fallback path under socket_timeout adds ~4-5s end-to-end before the first apply_remote_slot raises.
+- D8 Task 28 plan deviation: `scripts/solo-demo.sh` uses `docker run --network host -v ... sync-dev:latest python ...` for steps 3/4 and `make test-chaos-docker` for step 5. Plan-byte-exact bare `python`/`pytest` would fail on host py3.10. The `[0/5]` step builds `sync-dev:latest` if not already present.
+- D8 Task 27 chaos test fix-up: 5s polling deadline raced the EVALSHA→EVAL script-load fallback (~4-5s end-to-end). Bumped to 15s with comment explaining the timing. 3/3 stable on rerun.
+- Recurring D9 polish: extract `cluster` fixture used by `test_basic_propagation`, `test_partition`, `test_convergence` (3 near-identical 3-region testcontainer fixtures). Extract `make_app` test helper from `test_admin.py` and `test_relay.py` (similar Counter+Transport+Buffer construction).
+- D8 untracked artifacts: 14 extra `convergence_*.txt` results in `sync/tests/chaos/results/` from D8-wrap reruns; only the canonical `convergence_20260503-071116.txt` is committed. Either gitignore the rest, prune them, or commit one fresh canonical artifact at PR-merge time.
+- `scripts/solo-demo.sh` was syntax-validated (`bash -n`) but NOT run end-to-end. Pre-demo run on a clean clone in D9 or D10 before the dress rehearsal.
+- D8 service.py prod gap (now fixed): `_infer_region_from_url` substring match on `("us", "eu", "asia")` is fragile (matches "eustace.example.com" / "busy-host"). Solo-demo URLs work but D9 should harden this for production hostname schemes.
 
 ## Execution-mode note (D5 retrospective)
 
@@ -82,6 +94,21 @@ History:
 - Three reviewer-approved deviations: (a) Task 18 partition check switched from transport-tag to envelope-asserted region (test fixture necessitates; production-equivalent for trusted peers). (b) Task 18 fix-up commit (`ee05c66`) corrected `_handle` to thread transport-tag through to metric labels — original commit accidentally used asserted region for both partition AND metrics. (c) Task 19 reconcile-skip: plan's `if value <= 0: continue` was buggy vs plan's own test 2 (`us=0` for u_0); switched to `get_global` + presence check. Spec reviewer confirmed plan code was wrong; implementer's reading was spec-faithful (§5.reconciler.py + §6 Flow 3 say no value threshold).
 - Plan miscount streak holds: D5 +4, D6 +4, D7 +4 (predicted 42 / actual 46).
 - D7 wall-clock ~45 min (autonomous mode after user delegated). All 4 wrap gates first-try green; one mid-task reviewer fix-up.
+
+## Execution-mode note (D8 retrospective)
+
+- Subagent-driven workflow held through Tasks 22–28 (7 implementer + 8 reviewer dispatches + 2 fix-up implementer dispatches; Task 26 convergence proof skipped dual review because the proof is its own validation per Constitution Art IX; Task 24 skipped tests because plan declared it integration-tested via Tasks 20/25/26/27). Task 29 wrap ran in main session.
+- Six reviewer-approved deviations + 1 production-side fix triggered by chaos diagnosis:
+  - **T22:** D7 stub overflow path was buggy (drops new instead of appending); prod impl in this task fixes. Plan claimed Step-2 stub-passes but actually 4/5 — implementer caught it.
+  - **T23:** `TestClient` → `httpx.AsyncClient`+`ASGITransport` for cross-loop compat with pytest-asyncio.
+  - **T25:** dynamic `int(time.time() // 60)` window instead of literal 100.
+  - **T26:** dynamic window again, instead of literal 200.
+  - **T27:** test-only `socket_connect_timeout=1.0` + `socket_timeout=1.0`; polling 1.5s → 3.0s → 5.0s → 15.0s as flake forced upward bumps. Production fix (commit `eea9b4a`) added same kwargs to `service.py`'s `Redis.from_url` calls.
+  - **T28:** `solo-demo.sh` uses `sync-dev:latest` docker invocations (host py3.10 mismatch).
+- D8-wrap chaos rerun surfaced a chaos test flake post-T28: same `test_buffer_fills_when_local_redis_fails` that passed in implementer's verification became reproducibly failing on full-suite rerun. Diagnostic agent traced root cause: redis-py first-attempt read on dead-local socket blocks indefinitely without `socket_timeout`; with it, EVALSHA→EVAL script-load fallback path takes ~4-5s end-to-end in docker-in-docker. 5s deadline raced; bumped to 15s. 3/3 stable rerun.
+- Plan miscount streak holds: D5 +4, D6 +4, D7 +4, D8 +9 (predicted 50 / actual 59). D8 increment larger because plan's chaos count was 2 but the implementer wrote 2 separate test files matching plan; the +9 comes from accumulation across the four days.
+- D8 wall-clock ~3 hrs (autonomous mode). One reviewer fix-up (T18 metric labels — wait, that was D7; D8 had T27 chaos polling fix-up). Long tail eaten by chaos test diagnosis (~30 min) + waiting on testcontainers across reruns.
+- Five real plan defects discovered in D8 alone (T22 stub, T25/T26 windows, T27 timeouts; T18 + T19 from D7 already known). D9 plan should account for plan-source amendments OR explicitly mark plan as historical-only and rely on the handoff doc + this retrospective for source-of-truth.
 
 ---
 
