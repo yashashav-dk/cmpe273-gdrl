@@ -1,0 +1,6 @@
+redis>=5.0
+fastapi>=0.110
+uvicorn>=0.27
+click>=8.1
+prometheus-client>=0.20
+pydantic>=2.6

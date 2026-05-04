@@ -1,0 +1,44 @@
+version: "3.9"
+services:
+  redis-us:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  redis-eu:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+  redis-asia:
+    image: redis:7-alpine
+    ports: ["6381:6379"]
+
+  sync-us:
+    build:
+      context: ..
+      dockerfile: sync/Dockerfile
+    depends_on: [redis-us, redis-eu, redis-asia]
+    environment:
+      REGION: us
+      LOCAL_REDIS_URL: redis://redis-us:6379
+      PEER_REDIS_URLS: redis://redis-eu:6379,redis://redis-asia:6379
+    ports: ["9101:9100"]
+
+  sync-eu:
+    build:
+      context: ..
+      dockerfile: sync/Dockerfile
+    depends_on: [redis-us, redis-eu, redis-asia]
+    environment:
+      REGION: eu
+      LOCAL_REDIS_URL: redis://redis-eu:6379
+      PEER_REDIS_URLS: redis://redis-us:6379,redis://redis-asia:6379
+    ports: ["9102:9100"]
+
+  sync-asia:
+    build:
+      context: ..
+      dockerfile: sync/Dockerfile
+    depends_on: [redis-us, redis-eu, redis-asia]
+    environment:
+      REGION: asia
+      LOCAL_REDIS_URL: redis://redis-asia:6379
+      PEER_REDIS_URLS: redis://redis-us:6379,redis://redis-eu:6379
+    ports: ["9103:9100"]

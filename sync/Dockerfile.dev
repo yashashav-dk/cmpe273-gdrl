@@ -1,0 +1,6 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY sync/requirements.txt sync/requirements-dev.txt /app/sync/
+RUN pip install --no-cache-dir -r /app/sync/requirements-dev.txt
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app

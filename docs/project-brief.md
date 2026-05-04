@@ -7,7 +7,13 @@
 **Source:** `CMPE 273 work.pdf` (transcribed verbatim into this document for LLM and teammate consumption)
 **Final-name shortlist:** Triveni, Anemoi, Penstock, Triskele, Mascaret, Eunomia, Skopos, Aequora, Limen, Tula, Headrace, Stilling (see `docs/naming.md` once created)
 
-This is the canonical project brief. All other documents (specs, constitutions, plans, writeups) build on top of this.
+This is the canonical project brief, transcribed verbatim from the PDF. Some technical specifics have been superseded by post-Day-0 amendments. When the brief and a later document conflict, the later document wins:
+
+- **Sync wire channel** is `rl:sync:counter` (not `sync:deltas`) — see `docs/contracts.md` Contract 2 and `docs/sync-constitution.md` Appendix C, Amendment 1.
+- **Global counter key** is `rl:global:{tier}:{user_id}:{window_id}` — window-id segmented for per-minute reset via TTL.
+- **Sync writes peer slots only** — the gateway HIncrBy's its own region's slot. Single-writer-per-slot invariant preserved.
+
+For sync-service work specifically, start at `docs/sync-session-handoff.md`.
 
 ---
 

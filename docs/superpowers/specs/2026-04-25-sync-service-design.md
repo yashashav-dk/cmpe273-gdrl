@@ -169,7 +169,7 @@ At 5k req/s sustained the counter-channel rate scales linearly. If buffer pressu
 
 ## 5. Components
 
-8 modules. Each ≤ 150 LOC. Single-purpose, isolated, independently testable. Coalescer is gone (§4 explains: gateway publishes one envelope per allowed request, so sync has no batching to do); replaced by `relay.py`.
+9 modules. Each ≤ 150 LOC. Single-purpose, isolated, independently testable. Coalescer is gone (§4 explains: gateway publishes one envelope per allowed request, so sync has no batching to do); replaced by `relay.py`.
 
 ### `sync/crdt.py` — G-Counter primitive (~120 LOC)
 Pure data structure. No I/O. Lifted from `python3-crdt` (MIT, attribution in header).
@@ -603,21 +603,124 @@ Most content already drafted in this spec — rephrase for prose.
 
 ---
 
-## 14. Build timeline (mapped to PDF days)
+## 14. Build timeline (compressed; mapped to PDF days)
 
-| Day | Deliverable |
-|---|---|
-| D1 | docker-compose 3 Redis up. `sync/` Python project initialized. Standalone `make demo-sync` skeleton (just brings up containers). |
-| D2 | `RegionalCounter` complete with unit tests (incl. own-slot-write refusal). `crdt.py` complete with tests. `gateway-stub` working — emits Contract-2 envelopes on `rl:sync:counter`. |
-| D3 | `transport.py` complete. `relay.py` complete. End-to-end counter envelope propagation test green between sync-us and sync-eu via stub. `docs/sync-design.md` v1. |
-| D4 | `reconciler.py` complete. Wired into gateway flow (via stub). `rl_sync_lag_seconds` metric live. All Layer 2 tests green. |
-| D5 | `admin.py` complete. `/admin/partition` + `/admin/heal` working. Partition writeup section. Layer 3 e2e tests green. |
-| D6 | Team integration day. Swap `gateway-stub` for Nikhil's real gateway. Verify all flows still work. |
-| D7 | `buffer.py` complete (degraded mode for D9 chaos). Convergence test green. |
-| D8 | Chunked reconcile. `rl_global_counter_drift` metric. Layer 4 chaos tests green. Convergence proof committed. |
-| D9 | Failure-mode drills with whole team. `docs/failure-modes.md` complete. |
-| D10 | Demo dress rehearsal. `scripts/solo-demo.sh` polished. |
-| D11-12 | Writeup. |
-| D13-14 | Slides + dry runs + submit. |
+The project started 2026-04-26 (PDF Day 1). The other three components shipped through Days 1–8 in parallel; sync was deferred. Day 5 (2026-04-30) is the start of sync's effective build window. The original D1–D8 plan compresses into D5–D8 below. Total feature-complete budget: 4 working days for ~740 LOC + 4 test layers + harness. Each day = one PR, gated on tests + spec compliance + Constitution Art V quality gates.
 
-Sync service is feature-complete by D8 with two days of buffer before integration freeze.
+| PDF day | Date | Deliverable |
+|---|---|---|
+| D5 | 2026-04-30 | **Foundation + handover docs.** `crdt.py`, `counter.py` (with own-slot-write refusal Lua), `pyproject.toml`, `requirements.txt`, `infra/docker-compose.sync-only.yml`, `Makefile`. Layer 1 unit tests for crdt + envelope. Layer 2 integration test for counter (Lua atomic, refuses own slot, window scan, TTL refresh). `AGENTS.md` + `sync/CONTEXT.md` + module docstrings on `crdt.py`, `counter.py`. **Gate:** Layer 1 + counter integration green. |
+| D6 | 2026-05-01 | **Transport + harness.** `transport.py` (peer subscriber, reconnect backoff, health check). `sync/dev/gateway_stub.py` (Contract-2 envelope emitter). `sync/dev/sync_cli.py` (inspect/partition/heal/config). Layer 2 test for transport (peer-yield, reconnect-resub, toxiproxy disconnect detection). Module docstring on `transport.py`. **Gate:** Layer 2 transport green; stub publishes to all 3 Redis. |
+| D7 | 2026-05-02 | **Relay + reconciler.** `partition_table.py`, `relay.py`, `reconciler.py`. Layer 1 partition_table test. Layer 2 relay test (counter applies, self-origin drops, reconcile applies, partition blocks, lag observed). Layer 3 e2e basic propagation test (3-region cluster, US publish visible in EU+Asia within 2s). Module docstrings on `relay.py`, `reconciler.py`, `partition_table.py`. **Gate:** Layer 3 propagation green. |
+| D8 | 2026-05-03 | **Robustness + admin + chaos proof.** `buffer.py`, `admin.py`, `service.py`. Layer 1 buffer test. Layer 3 partition+heal test (asymmetric, drift collapses < 5s). Layer 4 convergence proof (60s partition + heal → assert convergence < 5s; result committed under `tests/chaos/results/`). Layer 4 redis-failure test. Module docstrings on `buffer.py`, `admin.py`, `service.py`. `scripts/solo-demo.sh`. **Gate:** all 4 layers green; convergence proof committed; sync **feature-complete**. |
+| D9 | 2026-05-04 | Layer 4 load test (5k RPS for 30 min). `docs/failure-modes.md` (F1–F7 executed). Team integration: swap `gateway-stub` for Nikhil's `gateway-us`. **Gate:** PDF Day 9 deliverable signed off. |
+| D10 | 2026-05-05 | Dress rehearsal. `scripts/solo-demo.sh` polished. `docs/sync-design.md` writeup ≥1500 words. **Gate:** Constitution Art IX termination conditions satisfied. |
+| D11–12 | 2026-05-06 → 07 | Writeup polish, second teammate review pass. |
+| D13–14 | 2026-05-08 → 09 | Slides + dry runs + submit. |
+
+### LOC budget tracking
+| Day | Module | LOC | Cumulative |
+|---|---|---|---|
+| D5 | crdt + counter | 220 | 220 |
+| D6 | transport | 100 | 320 |
+| D7 | relay + reconciler + partition_table | 210 | 530 |
+| D8 | buffer + admin + service | 260 | 790 |
+
+Within ±10% of the 740 LOC application budget. Tests +250 LOC, harness +60 LOC.
+
+### Compression risk and mitigation
+The original spec budgeted 8 build days (D1–D8); we have 4 (D5–D8). Mitigation:
+1. The CRDT primitive (`crdt.py`) is lifted from `python3-crdt` (MIT) — not built from scratch. Saves ~1 day.
+2. Coalescer is gone (Amendment 1) — saves another ~0.5 day.
+3. Constitution Art VIII §3 (failing test before fix) is non-negotiable; we do not compress by skipping tests. We compress by parallelizing test-writing with code-writing within each day's PR, not across days.
+4. If D7 slips, D8 absorbs by deferring the load test (Layer 4 `test_load.py`) into D9. Convergence proof is the load-bearing PDF deliverable; the load test is a nice-to-have.
+
+---
+
+## 15. Handover artifacts (LLM-aware + human-readable)
+
+A cold reader — fresh LLM session, new teammate, post-mortem six months from now — should be productive in five minutes. Three artifacts, total ~250 lines of prose, no standing maintenance burden.
+
+### 15.1 `AGENTS.md` (repo root, ~80 lines)
+
+Single navigation file at the repo root. Picked up automatically by LLM tools that honor the AGENTS.md convention (Claude Code, Cursor, Codex, etc.). Read first by any LLM dropped into the repo.
+
+Required content:
+- **Layout.** One line per top-level dir, naming owner and one-sentence purpose.
+- **Before touching `<component>/` read.** Pointer list to docs/contracts.md plus per-component constitution and latest design spec.
+- **Cross-team rules.** The four "do not break this" invariants:
+  1. Gateway is the only writer of `rl:local:*` and own-region slot of `rl:global:*:{w}`.
+  2. Sync is the only writer of peer-region slots in `rl:global:*:{w}`.
+  3. Agent is the only writer of `policy:*` and `override:*`.
+  4. No cross-region call on a request hot path. Ever.
+- **Routing rule.** If working in `sync/`, also read `sync/CONTEXT.md` next.
+
+Maintenance: update only when team boundaries change (rare).
+
+### 15.2 `sync/CONTEXT.md` (~120 lines)
+
+Sync-internal primer. Loaded by anyone working inside `sync/`.
+
+Sections (mandatory):
+- **§1 Mission** — five-line paraphrase of constitution Art I. "Make the agent possible by giving it a globally-coherent counter view."
+- **§2 Load-bearing invariants** — quoted verbatim from constitution (single-writer-per-slot, monotonic-within-window, no cross-region call on hot path, stateless processes). Prose paraphrase invites drift; quote is durable.
+- **§3 Module map** — one sentence per module with a `→ spec §5.<n>` pointer. Plus the dep graph from spec §5.
+- **§4 Common pitfalls** — what a fresh LLM tends to do wrong here:
+  - Decrementing slots (NEVER — see Constitution Art II §3).
+  - Sync writing own region's slot (NEVER — gateway already did via Contract 2; sync's `apply_remote_slot` rejects this).
+  - Coalescing or batching (NEVER — gateway emits per-request; sync relays one-for-one).
+  - Subscribing only to peer Redises (DO subscribe to all 3 incl. local, then drop self-origin counter envelopes in relay; this keeps partition simulation symmetric).
+  - Reading peer Redis from anywhere outside `sync/` (NEVER — sync's relay is the only path).
+- **§5 Pointers** — one-line summary each:
+  - `docs/sync-constitution.md` — non-negotiable rules.
+  - `docs/superpowers/specs/2026-04-25-sync-service-design.md` — this design (canonical).
+  - `docs/contracts.md` — the four cross-team contracts.
+  - `AGENTS.md` — repo-wide LLM router.
+- **§6 Test-first reminder** — for the change you're making, which test layer comes first?
+  - Pure logic (CRDT, envelope, partition table, buffer) → Layer 1 unit.
+  - Anything touching Redis (counter Lua, transport pubsub, reconciler scan) → Layer 2 integration.
+  - Cross-region behavior (propagation, partition, drift) → Layer 3 e2e.
+  - Convergence guarantees, redis-down recovery, sustained load → Layer 4 chaos.
+
+Maintenance: update §1 only on constitutional amendment; §3/§5 on module rename/spec rename; §4 grows as new pitfalls are discovered (a discovered pitfall = a fresh LLM made a mistake we want to prevent next time).
+
+### 15.3 Per-module docstring header (~6 lines × 9 modules ≈ 55 lines)
+
+Lives at the top of each `sync/*.py`. Cheapest, longest-lived form of handover — lives next to the code it describes; rot is forced visible at PR review.
+
+Template (apply to every module):
+```python
+"""
+sync/<module>.py — <one-sentence purpose>.
+
+Spec:        docs/superpowers/specs/2026-04-25-sync-service-design.md §5 <module>, §6 Flow <n>
+Constitution: docs/sync-constitution.md Art <n> §<n> (relevant invariants)
+Reads:       <Redis keys / channels read>
+Writes:      <Redis keys / channels written, plus what the module is forbidden from writing>
+Don't:       <2–3 most likely fresh-LLM mistakes for this module>
+"""
+```
+
+Worked example (`relay.py`):
+```python
+"""
+sync/relay.py — peer envelope receiver + max-merge applicator.
+
+Spec:        docs/superpowers/specs/2026-04-25-sync-service-design.md §5 relay.py, §6 Flow 2
+Constitution: docs/sync-constitution.md Art III §3 (transport), Art III §6 (single-writer)
+Reads:       rl:sync:counter on local + 2 peer Redises
+Writes:      local rl:global:{tier}:{user_id}:{window_id} (peer slots only — never own region)
+Don't:       coalesce, batch, write own region's slot, decrement.
+"""
+```
+
+Maintenance: changes when the module is rewritten — same PR, same review. No standing burden.
+
+### 15.4 What handover does NOT cover
+
+- Implementation pseudocode lives in spec §5, not in handover docs. Don't duplicate.
+- Test-writing patterns live in spec §10. Handover §6 is a routing pointer, not a tutorial.
+- Architecture diagrams live in spec §2. Handover does not redraw.
+- Constitutional rules live in `sync-constitution.md`. Handover quotes; does not paraphrase.
+
+The rule: handover is a **router**, not a copy. Each line either points to canonical content elsewhere or describes a "don't" that no other doc captures.
