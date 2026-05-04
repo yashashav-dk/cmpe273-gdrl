@@ -3,6 +3,7 @@ sync/tests/chaos/test_redis_failure.py — Layer 4 chaos: kill local Redis under
 load, verify buffer fills.
 """
 import asyncio
+import time
 import pytest
 from redis.asyncio import Redis
 from testcontainers.redis import RedisContainer
@@ -23,6 +24,7 @@ async def test_buffer_fills_when_local_redis_fails():
             port=int(container_local.get_exposed_port(6379)),
             decode_responses=False,
             socket_connect_timeout=1.0,
+            socket_timeout=1.0,
         )
         peer = Redis(
             host=container_peer.get_container_host_ip(),
@@ -46,7 +48,12 @@ async def test_buffer_fills_when_local_redis_fails():
                 "rl:sync:counter",
                 f'{{"tier":"free","user_id":"u_{i}","window_id":1,"region":"eu","value":1,"ts_ms":1}}'.encode(),
             )
-        await asyncio.sleep(3.0)
+        # Poll up to 5s for the buffer to fill (relay needs time to detect dead local + push).
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if buffer.size("relay_apply") > 0:
+                break
+            await asyncio.sleep(0.1)
         assert buffer.size("relay_apply") > 0
 
         task.cancel()
