@@ -37,12 +37,14 @@ log = logging.getLogger("sync")
 
 async def amain(region: str, local_url: str, peer_urls: list[str], reconcile_period_s: int) -> None:
     local = Redis.from_url(local_url, decode_responses=False, health_check_interval=15,
-                           socket_keepalive=True)
+                           socket_keepalive=True, socket_connect_timeout=1.0,
+                           socket_timeout=1.0)
     peers = {}
     for url in peer_urls:
         peer_region = _infer_region_from_url(url, region)
         peers[peer_region] = Redis.from_url(url, decode_responses=False,
-                                            health_check_interval=15, socket_keepalive=True)
+                                            health_check_interval=15, socket_keepalive=True,
+                                            socket_connect_timeout=1.0, socket_timeout=1.0)
 
     counter = RegionalCounter(region, local)
     partition_table = PartitionTable()
